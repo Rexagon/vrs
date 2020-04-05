@@ -1,11 +1,15 @@
+#![windows_subsystem = "windows"]
+
 use std::sync::Arc;
 
+use vulkano::format::ClearValue;
+use vulkano::image::ImageViewAccess;
 use vulkano::{
     buffer::{BufferUsage, CpuAccessibleBuffer},
     command_buffer::{AutoCommandBufferBuilder, DynamicState},
     device::{Device, DeviceExtensions, Features},
     framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract, Subpass},
-    image::SwapchainImage,
+    image::{AttachmentImage, SwapchainImage},
     instance::{Instance, PhysicalDevice, QueueFamily},
     pipeline::{viewport::Viewport, GraphicsPipeline},
     swapchain::{
@@ -124,16 +128,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let render_pass = Arc::new(
         vulkano::single_pass_renderpass!(device.clone(),
             attachments: {
-                color: {
+                intermediary: {
                     load: Clear,
+                    store: DontCare,
+                    format: swapchain.format(),
+                    samples: 4,
+                },
+                color: {
+                    load: DontCare,
                     store: Store,
                     format: swapchain.format(),
                     samples: 1,
                 }
             },
             pass: {
-                color: [color],
-                depth_stencil: {}
+                color: [intermediary],
+                depth_stencil: {},
+                resolve: [color]
             }
         )
         .unwrap(),
@@ -157,7 +168,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut dynamic_state = DynamicState::none();
 
-    let mut framebuffers = window_size_dependent_setup(&images, render_pass.clone(), &mut dynamic_state);
+    let mut framebuffers =
+        window_size_dependent_setup(device.clone(), &images, render_pass.clone(), &mut dynamic_state);
 
     //
 
@@ -190,7 +202,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 };
 
                 swapchain = new_swapchain;
-                framebuffers = window_size_dependent_setup(&new_images, render_pass.clone(), &mut dynamic_state);
+                framebuffers =
+                    window_size_dependent_setup(device.clone(), &new_images, render_pass.clone(), &mut dynamic_state);
                 recreate_swapchain = false;
             }
 
@@ -208,7 +221,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 recreate_swapchain = true;
             }
 
-            let clear_values = vec![[0.0, 0.0, 1.0, 1.0].into()];
+            let clear_values = vec![[0.0, 0.0, 0.0, 0.0].into(), ClearValue::None];
 
             let command_buffer = AutoCommandBufferBuilder::primary_one_time_submit(device.clone(), queue.family())
                 .unwrap()
@@ -250,11 +263,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn window_size_dependent_setup(
+    device: Arc<Device>,
     images: &[Arc<SwapchainImage<Window>>],
     render_pass: Arc<dyn RenderPassAbstract + Send + Sync>,
     dynamic_state: &mut DynamicState,
 ) -> Vec<Arc<dyn FramebufferAbstract + Send + Sync>> {
-    let dimensions = images[0].dimensions();
+    let dimensions = images[0].dimensions().width_height();
 
     let viewport = Viewport {
         origin: [0.0, 0.0],
@@ -265,14 +279,21 @@ fn window_size_dependent_setup(
 
     images
         .iter()
-        .map(|image| {
-            Arc::new(
+        .map(move |image| {
+            let intermediary =
+                AttachmentImage::transient_multisampled(device.clone(), dimensions, 4, image.format()).unwrap();
+
+            let framebuffer = Arc::new(
                 Framebuffer::start(render_pass.clone())
+                    .add(intermediary)
+                    .unwrap()
                     .add(image.clone())
                     .unwrap()
                     .build()
                     .unwrap(),
-            ) as Arc<dyn FramebufferAbstract + Send + Sync>
+            ) as Arc<dyn FramebufferAbstract + Send + Sync>;
+
+            framebuffer
         })
         .collect()
 }
