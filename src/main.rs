@@ -1,5 +1,7 @@
 #![windows_subsystem = "windows"]
 
+mod rendering;
+
 use std::sync::Arc;
 
 use vulkano::format::ClearValue;
