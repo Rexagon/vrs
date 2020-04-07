@@ -14,7 +14,7 @@ use winit::{
     window::WindowBuilder,
 };
 
-use crate::rendering::{FrameSystem, Pass, WorldState};
+use crate::rendering::{FrameSystem, MeshDrawSystem, Pass, WorldState};
 use nalgebra::Matrix4;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -61,7 +61,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let queue = queues.next().unwrap();
 
-    let mut frame_system = FrameSystem::new(surface, queue);
+    let mut frame_system = FrameSystem::new(surface, queue.clone());
+    let mesh_draw_system = MeshDrawSystem::new(queue.clone(), frame_system.deferred_subpass());
+
+    let mesh = mesh_draw_system.create_simple_mesh();
 
     events_loop.run(move |event, _, control_flow| match event {
         Event::WindowEvent {
@@ -88,11 +91,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             while let Some(pass) = frame.next_pass() {
                 match pass {
-                    Pass::Draw(_draw_pass) => {
-                        // TODO
+                    Pass::Draw(mut draw_pass) => {
+                        draw_pass.execute(mesh_draw_system.draw(draw_pass.dynamic_state(), mesh.clone()))
                     }
-                    Pass::Lighting(_lighting_pass) => {
-                        // TODO
+                    Pass::Lighting(mut lighting_pass) => {
+                        lighting_pass.ambient([0.9, 0.9, 0.9]);
                     }
                 }
             }

@@ -14,6 +14,8 @@ use vulkano::swapchain::{
 use vulkano::sync::{FlushError, GpuFuture, SharingMode};
 use winit::window::Window;
 
+use super::ambient_lighting_system::*;
+
 pub struct FrameSystem {
     surface: Arc<Surface<Window>>,
     queue: Arc<Queue>,
@@ -26,6 +28,8 @@ pub struct FrameSystem {
 
     should_recreate_swapchain: bool,
     frame_future: Option<Box<dyn GpuFuture>>,
+
+    ambient_lighting_system: AmbientLightingSystem,
 }
 
 impl FrameSystem {
@@ -118,8 +122,8 @@ impl FrameSystem {
             &mut dynamic_state,
         );
 
-        let _lighting_subpass = Subpass::from(render_pass.clone(), 1).unwrap();
-        // TODO: add lighting system
+        let lighting_subpass = Subpass::from(render_pass.clone(), 1).unwrap();
+        let ambient_lighting_system = AmbientLightingSystem::new(queue.clone(), lighting_subpass.clone());
 
         let frame_future = Some(Box::new(vulkano::sync::now(queue.device().clone())) as Box<dyn GpuFuture>);
 
@@ -133,6 +137,7 @@ impl FrameSystem {
             framebuffers,
             should_recreate_swapchain: false,
             frame_future,
+            ambient_lighting_system,
         }
     }
 
@@ -380,10 +385,36 @@ impl<'f, 's: 'f, 'w: 'f> DrawPass<'f, 's, 'w> {
             )
         }
     }
+
+    #[inline]
+    pub fn dynamic_state(&self) -> &DynamicState {
+        &self.frame.system.dynamic_state
+    }
 }
 
 pub struct LightingPass<'f, 's: 'f, 'w: 'f> {
     frame: &'f mut Frame<'s, 'w>,
+}
+
+impl<'f, 's: 'f, 'w: 'f> LightingPass<'f, 's, 'w> {
+    pub fn ambient(&mut self, color: [f32; 3]) {
+        let command_buffer = self.frame.system.ambient_lighting_system.draw(
+            &self.frame.system.dynamic_state,
+            self.frame.system.attachments.diffuse.clone(),
+            color,
+        );
+
+        unsafe {
+            self.frame.command_buffer = Some(
+                self.frame
+                    .command_buffer
+                    .take()
+                    .unwrap()
+                    .execute_commands(command_buffer)
+                    .unwrap(),
+            )
+        }
+    }
 }
 
 struct Attachments {
