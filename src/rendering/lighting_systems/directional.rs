@@ -46,9 +46,15 @@ impl DirectionalLightingSystem {
         self.descriptor_set = input.into_descriptor_set(self.pipeline.as_ref());
     }
 
-    pub fn draw(&self, dynamic_state: &DynamicState, color: [f32; 3], direction: [f32; 3]) -> AutoCommandBuffer {
+    pub fn draw(
+        &self,
+        dynamic_state: &DynamicState,
+        intensity: f32,
+        color: [f32; 3],
+        direction: [f32; 3],
+    ) -> AutoCommandBuffer {
         let push_constants = fragment_shader::ty::LightParameters {
-            color: [color[0], color[1], color[2], 1.0],
+            color: [color[0], color[1], color[2], intensity],
             direction: [direction[0], direction[1], direction[2], 1.0],
         };
 

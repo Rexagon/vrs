@@ -10,5 +10,7 @@ void main() {
     vec3 diffuse = subpassLoad(u_diffuse).rgb;
     vec3 light = subpassLoad(u_light).rgb;
 
-    f_color = vec4(diffuse * light, 1.0);
+    vec3 color = diffuse * light;
+
+    f_color = vec4(color / (color + vec3(1.0, 1.0, 1.0)), 1.0);
 }

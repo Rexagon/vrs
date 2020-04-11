@@ -11,9 +11,12 @@ layout(push_constant) uniform LightParameters {
 layout(location = 0) out vec4 f_light;
 
 void main() {
+    vec3 color = light_parameters.color.rgb;
+    float intensity = light_parameters.color.a;
+
     vec3 normal = normalize(subpassLoad(u_normal).rgb);
 
     float light = clamp(dot(normal, -normalize(light_parameters.direction.xyz)), 0.0, 1.0);
 
-    f_light = vec4(light * light_parameters.color.rgb, 1.0);
+    f_light = vec4(light * color * intensity, 1.0);
 }

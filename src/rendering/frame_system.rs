@@ -434,22 +434,23 @@ pub struct LightingPass<'f, 's: 'f> {
 }
 
 impl<'f, 's: 'f> LightingPass<'f, 's> {
-    pub fn ambient(&mut self, color: [f32; 3]) {
-        let command_buffer = self
-            .frame
-            .system
-            .ambient_lighting_system
-            .draw(&self.frame.system.dynamic_state, color);
+    pub fn ambient(&mut self, intensity: f32, color: [f32; 3]) {
+        let command_buffer =
+            self.frame
+                .system
+                .ambient_lighting_system
+                .draw(&self.frame.system.dynamic_state, intensity, color);
 
         self.frame.execute_secondary_buffer(command_buffer);
     }
 
-    pub fn directional(&mut self, color: [f32; 3], direction: [f32; 3]) {
-        let command_buffer =
-            self.frame
-                .system
-                .directional_lighting_system
-                .draw(&self.frame.system.dynamic_state, color, direction);
+    pub fn directional(&mut self, intensity: f32, color: [f32; 3], direction: [f32; 3]) {
+        let command_buffer = self.frame.system.directional_lighting_system.draw(
+            &self.frame.system.dynamic_state,
+            intensity,
+            color,
+            direction,
+        );
 
         self.frame.execute_secondary_buffer(command_buffer);
     }

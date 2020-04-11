@@ -32,9 +32,9 @@ impl AmbientLightingSystem {
         }
     }
 
-    pub fn draw(&self, dynamic_state: &DynamicState, ambient_color: [f32; 3]) -> AutoCommandBuffer {
+    pub fn draw(&self, dynamic_state: &DynamicState, intensity: f32, ambient_color: [f32; 3]) -> AutoCommandBuffer {
         let push_constants = fragment_shader::ty::LightParameters {
-            color: [ambient_color[0], ambient_color[1], ambient_color[2], 1.0],
+            color: [ambient_color[0], ambient_color[1], ambient_color[2], intensity],
         };
 
         AutoCommandBufferBuilder::secondary_graphics(

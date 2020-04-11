@@ -113,9 +113,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         &mesh_state,
                     )),
                     Pass::Lighting(mut lighting_pass) => {
-                        lighting_pass.ambient([0.2, 0.2, 0.2]);
-                        lighting_pass.directional([1.0, 0.7, 0.7], [-0.5, 0.4, -0.5]);
-                        lighting_pass.directional([0.1, 0.1, 0.4], [0.5, 0.5, 0.5]);
+                        lighting_pass.ambient(0.2, [1.0, 1.0, 1.0]);
+                        lighting_pass.directional(10.0, [1.0, 0.7, 0.7], [-0.5, 0.4, -0.5]);
+                        lighting_pass.directional(10.0, [0.7, 0.7, 1.0], [0.5, 0.5, 0.5]);
                     }
                     Pass::Compose(mut composing_pass) => {
                         composing_pass.compose();
