@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
-use vulkano::buffer::{BufferAccess, BufferUsage, CpuAccessibleBuffer};
+use vulkano::buffer::{BufferAccess, BufferUsage, CpuAccessibleBuffer, CpuBufferPool};
 use vulkano::command_buffer::{AutoCommandBuffer, AutoCommandBufferBuilder, DynamicState};
+use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
+use vulkano::descriptor::DescriptorSet;
 use vulkano::device::Queue;
 use vulkano::framebuffer::{RenderPassAbstract, Subpass};
 use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
@@ -9,6 +11,8 @@ use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
 pub struct MeshDrawSystem {
     queue: Arc<Queue>,
     pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
+    world_uniform_buffer_pool: CpuBufferPool<vertex_shader::ty::WorldData>,
+    world_descriptor_set: Arc<dyn DescriptorSet + Send + Sync>,
 }
 
 impl MeshDrawSystem {
@@ -16,7 +20,7 @@ impl MeshDrawSystem {
     where
         R: RenderPassAbstract + Send + Sync + 'static,
     {
-        let pipeline = {
+        let pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync> = {
             let vertex_shader =
                 vertex_shader::Shader::load(queue.device().clone()).expect("Failed to create vertex shader module");
             let fragment_shader =
@@ -36,49 +40,165 @@ impl MeshDrawSystem {
             ) as Arc<_>
         };
 
-        Self { queue, pipeline }
+        let mut world_uniform_buffer_pool =
+            CpuBufferPool::<vertex_shader::ty::WorldData>::new(queue.device().clone(), BufferUsage::all());
+
+        let world_descriptor_set =
+            WorldState::default().into_descriptor_set(pipeline.as_ref(), &mut world_uniform_buffer_pool);
+
+        Self {
+            queue,
+            pipeline,
+            world_uniform_buffer_pool,
+            world_descriptor_set,
+        }
     }
 
-    pub fn draw<V>(&self, dynamic_state: &DynamicState, vertex_buffer: Arc<V>) -> AutoCommandBuffer
+    pub fn set_world_state(&mut self, world_state: WorldState) {
+        self.world_descriptor_set =
+            world_state.into_descriptor_set(self.pipeline.as_ref(), &mut self.world_uniform_buffer_pool);
+    }
+
+    pub fn draw<V>(
+        &self,
+        dynamic_state: &DynamicState,
+        vertex_buffer: Arc<V>,
+        index_buffer: Arc<CpuAccessibleBuffer<[u16]>>,
+        mesh_state: &MeshState,
+    ) -> AutoCommandBuffer
     where
         V: BufferAccess + Send + Sync + 'static,
     {
+        let push_constants: vertex_shader::ty::MeshData = mesh_state.into();
+
         AutoCommandBufferBuilder::secondary_graphics(
             self.queue.device().clone(),
             self.queue.family(),
             self.pipeline.clone().subpass(),
         )
         .unwrap()
-        .draw(self.pipeline.clone(), dynamic_state, vec![vertex_buffer], (), ())
+        .draw_indexed(
+            self.pipeline.clone(),
+            dynamic_state,
+            vec![vertex_buffer],
+            index_buffer,
+            self.world_descriptor_set.clone(),
+            push_constants,
+        )
         .unwrap()
         .build()
         .unwrap()
     }
 
-    pub fn create_simple_mesh(&self) -> Arc<CpuAccessibleBuffer<[Vertex]>> {
-        CpuAccessibleBuffer::from_iter(
+    pub fn create_simple_mesh(&self) -> (Arc<CpuAccessibleBuffer<[Vertex]>>, Arc<CpuAccessibleBuffer<[u16]>>) {
+        // TODO: move into separate model loading system
+
+        let file = std::fs::File::open("./models/monkey.glb").unwrap();
+        let reader = std::io::BufReader::new(file);
+        let gltf = gltf::Gltf::from_reader(reader).unwrap();
+
+        let mesh = gltf.meshes().next().unwrap();
+        let primitive = mesh.primitives().next().unwrap();
+
+        let buffer = gltf.blob.as_ref().unwrap();
+
+        let reader = primitive.reader(|_| Some(buffer));
+
+        let vertex_buffer = CpuAccessibleBuffer::from_iter(self.queue.device().clone(), BufferUsage::all(), false, {
+            reader
+                .read_positions()
+                .and_then(|positions_iter| reader.read_normals().map(|normals_iter| (positions_iter, normals_iter)))
+                .map(|(positions_iter, normals_iter)| {
+                    positions_iter.zip(normals_iter).map(|(position, normal)| Vertex {
+                        position: [-position[0], position[2], position[1]],
+                        normal: [-normal[0], normal[2], normal[1]],
+                    })
+                })
+                .unwrap()
+        })
+        .expect("Failed to create vertex buffer");
+
+        let index_buffer = CpuAccessibleBuffer::from_iter(
             self.queue.device().clone(),
             BufferUsage::all(),
             false,
-            [
-                Vertex {
-                    position: [-0.5, -0.25],
-                },
-                Vertex { position: [0.0, 0.5] },
-                Vertex { position: [0.25, -0.1] },
-            ]
-            .iter()
-            .cloned(),
+            match reader.read_indices().unwrap() {
+                gltf::mesh::util::ReadIndices::U8(iter) => itertools::Either::Left(iter.map(|index| index as u16)),
+                gltf::mesh::util::ReadIndices::U16(iter) => itertools::Either::Right(iter),
+                gltf::mesh::util::ReadIndices::U32(_) => panic!("Not yet"),
+            },
         )
-        .expect("Failed to create vertex buffer")
+        .expect("Failed to create index buffer");
+
+        (vertex_buffer, index_buffer)
+    }
+}
+
+#[derive(Clone)]
+pub struct WorldState {
+    pub view: glm::Mat4,
+    pub projection: glm::Mat4,
+}
+
+impl WorldState {
+    pub fn into_descriptor_set(
+        self,
+        pipeline: &(dyn GraphicsPipelineAbstract + Send + Sync),
+        uniform_buffer_pool: &mut CpuBufferPool<vertex_shader::ty::WorldData>,
+    ) -> Arc<dyn DescriptorSet + Send + Sync> {
+        let uniform_data = vertex_shader::ty::WorldData {
+            view: self.view.into(),
+            projection: self.projection.into(),
+        };
+
+        let uniform_buffer = uniform_buffer_pool.next(uniform_data).unwrap();
+        let layout = pipeline.descriptor_set_layout(0).unwrap();
+        Arc::new(
+            PersistentDescriptorSet::start(layout.clone())
+                .add_buffer(uniform_buffer)
+                .unwrap()
+                .build()
+                .unwrap(),
+        )
+    }
+}
+
+impl Default for WorldState {
+    fn default() -> Self {
+        Self {
+            view: glm::Mat4::identity(),
+            projection: glm::Mat4::identity(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct MeshState {
+    pub transform: glm::Mat4,
+}
+
+impl From<&MeshState> for vertex_shader::ty::MeshData {
+    fn from(data: &MeshState) -> Self {
+        Self {
+            transform: data.transform.clone().into(),
+        }
+    }
+}
+
+impl Default for MeshState {
+    fn default() -> Self {
+        Self {
+            transform: glm::Mat4::identity(),
+        }
     }
 }
 
 #[derive(Default, Debug, Clone)]
 pub struct Vertex {
-    pub position: [f32; 2],
+    pub position: [f32; 3],
+    pub normal: [f32; 3],
 }
-vulkano::impl_vertex!(Vertex, position);
+vulkano::impl_vertex!(Vertex, position, normal);
 
 mod vertex_shader {
     vulkano_shaders::shader! {

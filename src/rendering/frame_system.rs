@@ -1,20 +1,6 @@
-use std::sync::Arc;
-
-use nalgebra::Matrix4;
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBuffer, DynamicState};
-use vulkano::device::{Device, Queue};
-use vulkano::format::Format;
-use vulkano::framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract, Subpass};
-use vulkano::image::{AttachmentImage, ImageAccess, ImageViewAccess, SwapchainImage};
-use vulkano::pipeline::viewport::Viewport;
-use vulkano::swapchain::{
-    AcquireError, ColorSpace, FullscreenExclusive, PresentMode, Surface, SurfaceTransform, Swapchain,
-    SwapchainCreationError,
-};
-use vulkano::sync::{FlushError, GpuFuture, SharingMode};
-use winit::window::Window;
-
-use super::ambient_lighting_system::*;
+use super::composition_system::*;
+use super::lighting_systems::*;
+use super::prelude::*;
 
 pub struct FrameSystem {
     surface: Arc<Surface<Window>>,
@@ -30,6 +16,9 @@ pub struct FrameSystem {
     frame_future: Option<Box<dyn GpuFuture>>,
 
     ambient_lighting_system: AmbientLightingSystem,
+    directional_lighting_system: DirectionalLightingSystem,
+
+    composition_system: CompositionSystem,
 }
 
 impl FrameSystem {
@@ -89,6 +78,12 @@ impl FrameSystem {
                         format: ImageViewAccess::format(&attachments.normals),
                         samples: 1,
                     },
+                    light: {
+                        load: Clear,
+                        store: DontCare,
+                        format: ImageViewAccess::format(&attachments.light),
+                        samples: 1,
+                    },
                     depth: {
                         load: Clear,
                         store: DontCare,
@@ -103,9 +98,14 @@ impl FrameSystem {
                         input: []
                     },
                     {
+                        color: [light],
+                        depth_stencil: {},
+                        input: [diffuse, normals/*, depth*/]
+                    },
+                    {
                         color: [final_color],
                         depth_stencil: {},
-                        input: [diffuse, normals, depth]
+                        input: [diffuse, light, depth]
                     }
                 ]
             )
@@ -123,7 +123,13 @@ impl FrameSystem {
         );
 
         let lighting_subpass = Subpass::from(render_pass.clone(), 1).unwrap();
-        let ambient_lighting_system = AmbientLightingSystem::new(queue.clone(), lighting_subpass.clone());
+        let ambient_lighting_system =
+            AmbientLightingSystem::new(queue.clone(), lighting_subpass.clone(), attachments.clone().into());
+        let directional_lighting_system =
+            DirectionalLightingSystem::new(queue.clone(), lighting_subpass.clone(), attachments.clone().into());
+
+        let composition_subpass = Subpass::from(render_pass.clone(), 2).unwrap();
+        let composition_system = CompositionSystem::new(queue.clone(), composition_subpass, attachments.clone().into());
 
         let frame_future = Some(Box::new(vulkano::sync::now(queue.device().clone())) as Box<dyn GpuFuture>);
 
@@ -138,6 +144,8 @@ impl FrameSystem {
             should_recreate_swapchain: false,
             frame_future,
             ambient_lighting_system,
+            directional_lighting_system,
+            composition_system,
         }
     }
 
@@ -151,7 +159,7 @@ impl FrameSystem {
         self.should_recreate_swapchain = true;
     }
 
-    pub fn frame<'s, 'w>(&'s mut self, world_state: &'w WorldState) -> Option<Frame<'s, 'w>> {
+    pub fn frame<'s, 'w>(&'s mut self) -> Option<Frame<'s>> {
         self.frame_future.as_mut().unwrap().cleanup_finished();
 
         if self.should_recreate_swapchain {
@@ -191,7 +199,7 @@ impl FrameSystem {
 
         let frame_future = Some(Box::new(self.frame_future.take().unwrap().join(acquire_future)) as Box<_>);
 
-        Some(Frame::new(self, world_state, frame_future, swapchain_image_index))
+        Some(Frame::new(self, frame_future, swapchain_image_index))
     }
 
     #[inline]
@@ -204,11 +212,16 @@ impl FrameSystem {
             AttachmentImage::transient_input_attachment(device.clone(), dimensions, Format::A2B10G10R10UnormPack32)
                 .unwrap();
 
+        let light =
+            AttachmentImage::transient_input_attachment(device.clone(), dimensions, Format::A2B10G10R10UnormPack32)
+                .unwrap();
+
         let depth = AttachmentImage::transient_input_attachment(device, dimensions, Format::D32Sfloat).unwrap();
 
         Attachments {
             diffuse,
             normals,
+            light,
             depth,
         }
     }
@@ -240,6 +253,8 @@ impl FrameSystem {
                         .unwrap()
                         .add(attachments.normals.clone())
                         .unwrap()
+                        .add(attachments.light.clone())
+                        .unwrap()
                         .add(attachments.depth.clone())
                         .unwrap()
                         .build()
@@ -250,13 +265,8 @@ impl FrameSystem {
     }
 }
 
-pub struct WorldState {
-    pub world_matrix: Matrix4<f32>,
-}
-
-pub struct Frame<'s, 'w> {
+pub struct Frame<'s> {
     system: &'s mut FrameSystem,
-    world_state: &'w WorldState,
     frame_future: Option<Box<dyn GpuFuture>>,
     swapchain_image_index: usize,
 
@@ -264,16 +274,14 @@ pub struct Frame<'s, 'w> {
     command_buffer: Option<AutoCommandBufferBuilder>,
 }
 
-impl<'s, 'w> Frame<'s, 'w> {
+impl<'s> Frame<'s> {
     fn new(
         system: &'s mut FrameSystem,
-        world_state: &'w WorldState,
         frame_future: Option<Box<dyn GpuFuture>>,
         swapchain_image_index: usize,
     ) -> Self {
         Self {
             system,
-            world_state,
             frame_future,
             swapchain_image_index,
             pass_index: 0,
@@ -281,7 +289,7 @@ impl<'s, 'w> Frame<'s, 'w> {
         }
     }
 
-    pub fn next_pass<'f>(&'f mut self) -> Option<Pass<'f, 's, 'w>> {
+    pub fn next_pass<'f>(&'f mut self) -> Option<Pass<'f, 's>> {
         match {
             let pass_index = self.pass_index;
             self.pass_index += 1;
@@ -301,6 +309,7 @@ impl<'s, 'w> Frame<'s, 'w> {
                             [0.0, 0.0, 0.0, 0.0].into(),
                             [0.0, 0.0, 0.0, 0.0].into(),
                             [0.0, 0.0, 0.0, 0.0].into(),
+                            [0.0, 0.0, 0.0, 0.0].into(),
                             1.0f32.into(),
                         ],
                     )
@@ -314,6 +323,10 @@ impl<'s, 'w> Frame<'s, 'w> {
                 Some(Pass::Lighting(LightingPass { frame: self }))
             }
             2 => {
+                self.command_buffer = Some(self.command_buffer.take().unwrap().next_subpass(true).unwrap());
+                Some(Pass::Compose(ComposingPass { frame: self }))
+            }
+            3 => {
                 let command_buffer = self
                     .command_buffer
                     .take()
@@ -359,16 +372,17 @@ impl<'s, 'w> Frame<'s, 'w> {
     }
 }
 
-pub enum Pass<'f, 's: 'f, 'w: 'f> {
-    Draw(DrawPass<'f, 's, 'w>),
-    Lighting(LightingPass<'f, 's, 'w>),
+pub enum Pass<'f, 's: 'f> {
+    Draw(DrawPass<'f, 's>),
+    Lighting(LightingPass<'f, 's>),
+    Compose(ComposingPass<'f, 's>),
 }
 
-pub struct DrawPass<'f, 's: 'f, 'w: 'f> {
-    frame: &'f mut Frame<'s, 'w>,
+pub struct DrawPass<'f, 's: 'f> {
+    frame: &'f mut Frame<'s>,
 }
 
-impl<'f, 's: 'f, 'w: 'f> DrawPass<'f, 's, 'w> {
+impl<'f, 's: 'f> DrawPass<'f, 's> {
     #[inline]
     pub fn execute<C>(&mut self, command_buffer: C)
     where
@@ -392,17 +406,36 @@ impl<'f, 's: 'f, 'w: 'f> DrawPass<'f, 's, 'w> {
     }
 }
 
-pub struct LightingPass<'f, 's: 'f, 'w: 'f> {
-    frame: &'f mut Frame<'s, 'w>,
+pub struct LightingPass<'f, 's: 'f> {
+    frame: &'f mut Frame<'s>,
 }
 
-impl<'f, 's: 'f, 'w: 'f> LightingPass<'f, 's, 'w> {
+impl<'f, 's: 'f> LightingPass<'f, 's> {
     pub fn ambient(&mut self, color: [f32; 3]) {
-        let command_buffer = self.frame.system.ambient_lighting_system.draw(
-            &self.frame.system.dynamic_state,
-            self.frame.system.attachments.diffuse.clone(),
-            color,
-        );
+        let command_buffer = self
+            .frame
+            .system
+            .ambient_lighting_system
+            .draw(&self.frame.system.dynamic_state, color);
+
+        unsafe {
+            self.frame.command_buffer = Some(
+                self.frame
+                    .command_buffer
+                    .take()
+                    .unwrap()
+                    .execute_commands(command_buffer)
+                    .unwrap(),
+            )
+        }
+    }
+
+    pub fn directional(&mut self, color: [f32; 3], direction: [f32; 3]) {
+        let command_buffer =
+            self.frame
+                .system
+                .directional_lighting_system
+                .draw(&self.frame.system.dynamic_state, color, direction);
 
         unsafe {
             self.frame.command_buffer = Some(
@@ -417,8 +450,54 @@ impl<'f, 's: 'f, 'w: 'f> LightingPass<'f, 's, 'w> {
     }
 }
 
+pub struct ComposingPass<'f, 's: 'f> {
+    frame: &'f mut Frame<'s>,
+}
+
+impl<'f, 's: 'f> ComposingPass<'f, 's> {
+    pub fn compose(&mut self) {
+        let command_buffer = self
+            .frame
+            .system
+            .composition_system
+            .draw(&self.frame.system.dynamic_state);
+
+        unsafe {
+            self.frame.command_buffer = Some(
+                self.frame
+                    .command_buffer
+                    .take()
+                    .unwrap()
+                    .execute_commands(command_buffer)
+                    .unwrap(),
+            )
+        }
+    }
+}
+
+#[derive(Clone)]
 struct Attachments {
     diffuse: Arc<AttachmentImage>,
     normals: Arc<AttachmentImage>,
+    light: Arc<AttachmentImage>,
     depth: Arc<AttachmentImage>,
+}
+
+impl From<Attachments> for LightingSystemInput {
+    fn from(attachments: Attachments) -> Self {
+        Self {
+            diffuse: attachments.diffuse,
+            normals: attachments.normals,
+        }
+    }
+}
+
+impl From<Attachments> for ComposingSystemInput {
+    fn from(attachments: Attachments) -> Self {
+        Self {
+            diffuse: attachments.diffuse,
+            light: attachments.light,
+            depth: attachments.depth,
+        }
+    }
 }

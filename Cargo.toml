@@ -6,10 +6,13 @@ edition = "2018"
 
 [dependencies]
 env_logger = "0.7"
+gltf = { version = "0.15", features = ["utils"] }
 vulkano = "0.18"
 vulkano-shaders = "0.18"
 vulkano-win = "0.18"
 log = "0.4"
 nalgebra = "0.20"
+nalgebra-glm = "0.7"
 image = "0.23"
+itertools = "0.9"
 winit = "0.22"

@@ -1,5 +1,7 @@
 #![windows_subsystem = "windows"]
 
+extern crate nalgebra_glm as glm;
+
 mod rendering;
 
 use vulkano::{
@@ -14,8 +16,7 @@ use winit::{
     window::WindowBuilder,
 };
 
-use crate::rendering::{FrameSystem, MeshDrawSystem, Pass, WorldState};
-use nalgebra::Matrix4;
+use crate::rendering::{FrameSystem, MeshDrawSystem, MeshState, Pass, WorldState};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
@@ -61,10 +62,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let queue = queues.next().unwrap();
 
-    let mut frame_system = FrameSystem::new(surface, queue.clone());
-    let mesh_draw_system = MeshDrawSystem::new(queue.clone(), frame_system.deferred_subpass());
+    let mut frame_system = FrameSystem::new(surface.clone(), queue.clone());
+    let mut mesh_draw_system = MeshDrawSystem::new(queue.clone(), frame_system.deferred_subpass());
 
     let mesh = mesh_draw_system.create_simple_mesh();
+
+    let create_world_state = {
+        let surface = surface.clone();
+        move || WorldState {
+            view: glm::look_at_rh(
+                &glm::Vec3::new(0.0, 3.0, -10.0),
+                &glm::Vec3::identity(),
+                &glm::Vec3::new(0.0, -1.0, 0.0),
+            ),
+            projection: glm::infinite_perspective_rh_zo(surface.window().aspect(), 0.5, 0.01),
+        }
+    };
+
+    mesh_draw_system.set_world_state(create_world_state());
+    let mesh_state = MeshState {
+        transform: glm::Mat4::identity(),
+    };
 
     events_loop.run(move |event, _, control_flow| match event {
         Event::WindowEvent {
@@ -78,28 +96,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..
         } => {
             frame_system.invalidate_swapchain();
+            mesh_draw_system.set_world_state(create_world_state());
         }
         Event::RedrawEventsCleared => {
-            let world_state = WorldState {
-                world_matrix: Matrix4::identity(),
-            };
-
-            let mut frame = match frame_system.frame(&world_state) {
+            let mut frame = match frame_system.frame() {
                 Some(frame) => frame,
                 None => return,
             };
 
             while let Some(pass) = frame.next_pass() {
                 match pass {
-                    Pass::Draw(mut draw_pass) => {
-                        draw_pass.execute(mesh_draw_system.draw(draw_pass.dynamic_state(), mesh.clone()))
-                    }
+                    Pass::Draw(mut draw_pass) => draw_pass.execute(mesh_draw_system.draw(
+                        draw_pass.dynamic_state(),
+                        mesh.0.clone(),
+                        mesh.1.clone(),
+                        &mesh_state,
+                    )),
                     Pass::Lighting(mut lighting_pass) => {
-                        lighting_pass.ambient([0.9, 0.9, 0.9]);
+                        lighting_pass.ambient([0.2, 0.2, 0.2]);
+                        lighting_pass.directional([1.0, 1.0, 1.0], [-0.5, 0.4, -0.5]);
+                        lighting_pass.directional([0.1, 0.1, 0.1], [0.5, 0.5, 0.5]);
+                    }
+                    Pass::Compose(mut composing_pass) => {
+                        composing_pass.compose();
                     }
                 }
             }
         }
         _ => (),
     });
+}
+
+trait WindowExt {
+    fn aspect(&self) -> f32;
+}
+
+impl WindowExt for winit::window::Window {
+    fn aspect(&self) -> f32 {
+        let size = self.inner_size();
+        size.width as f32 / size.height as f32
+    }
 }
