@@ -72,16 +72,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         move || WorldState {
             view: glm::look_at_rh(
                 &glm::Vec3::new(0.0, 3.0, -10.0),
-                &glm::Vec3::identity(),
+                &glm::Vec3::new(0.0, 0.0, 0.0),
                 &glm::Vec3::new(0.0, -1.0, 0.0),
             ),
-            projection: glm::infinite_perspective_rh_zo(surface.window().aspect(), 0.5, 0.01),
+            projection: glm::infinite_perspective_rh_zo(surface.window().aspect(), f32::to_radians(75.0), 0.01),
         }
     };
 
     mesh_draw_system.set_world_state(create_world_state());
     let mesh_state = MeshState {
-        transform: glm::Mat4::identity(),
+        transform: glm::translation(&glm::Vec3::new(0.0, 0.0, 0.0)),
     };
 
     events_loop.run(move |event, _, control_flow| match event {
@@ -114,8 +114,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     )),
                     Pass::Lighting(mut lighting_pass) => {
                         lighting_pass.ambient([0.2, 0.2, 0.2]);
-                        lighting_pass.directional([1.0, 1.0, 1.0], [-0.5, 0.4, -0.5]);
-                        lighting_pass.directional([0.1, 0.1, 0.1], [0.5, 0.5, 0.5]);
+                        lighting_pass.directional([1.0, 0.7, 0.7], [-0.5, 0.4, -0.5]);
+                        lighting_pass.directional([0.1, 0.1, 0.4], [0.5, 0.5, 0.5]);
                     }
                     Pass::Compose(mut composing_pass) => {
                         composing_pass.compose();

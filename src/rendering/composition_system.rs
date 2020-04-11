@@ -1,45 +1,32 @@
-use super::prelude::*;
-use super::utils::*;
+use crate::rendering::prelude::*;
+use crate::rendering::screen_quad::*;
+use crate::rendering::utils::IntoDescriptorSet;
 
-pub struct CompositionSystem {
+pub struct ComposingSystem {
     queue: Arc<Queue>,
-    vertex_buffer: Arc<CpuAccessibleBuffer<[ScreenVertex]>>,
+    vertex_buffer: Arc<ScreenQuadVertexBuffer>,
     pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
     descriptor_set: Arc<dyn DescriptorSet + Send + Sync>,
 }
 
-impl CompositionSystem {
-    pub fn new<R>(queue: Arc<Queue>, subpass: Subpass<R>, input: ComposingSystemInput) -> Self
+impl ComposingSystem {
+    pub fn new<R>(queue: Arc<Queue>, subpass: Subpass<R>, screen_quad: &ScreenQuad, input: ComposingSystemInput) -> Self
     where
         R: RenderPassAbstract + Send + Sync + 'static,
     {
-        let vertex_buffer = CpuAccessibleBuffer::from_iter(
-            queue.device().clone(),
-            BufferUsage::all(),
-            false,
-            ScreenVertex::quad().iter().cloned(),
-        )
-        .expect("Failed to create vertex buffer");
+        let fragment_shader =
+            fragment_shader::Shader::load(queue.device().clone()).expect("Failed to create fragment shader module");
 
-        let pipeline = {
-            let vertex_shader = screen_vertex_shader::Shader::load(queue.device().clone())
-                .expect("Failed to create vertex shader module");
+        let vertex_buffer = screen_quad.vertex_buffer();
 
-            let fragment_shader =
-                fragment_shader::Shader::load(queue.device().clone()).expect("Failed to create fragment shader module");
-
-            Arc::new(
-                GraphicsPipeline::start()
-                    .vertex_input_single_buffer::<ScreenVertex>()
-                    .vertex_shader(vertex_shader.main_entry_point(), ())
-                    .triangle_fan()
-                    .viewports_dynamic_scissors_irrelevant(1)
-                    .fragment_shader(fragment_shader.main_entry_point(), ())
-                    .render_pass(subpass)
-                    .build(queue.device().clone())
-                    .unwrap(),
-            )
-        };
+        let pipeline = Arc::new(
+            screen_quad
+                .start_graphics_pipeline()
+                .fragment_shader(fragment_shader.main_entry_point(), ())
+                .render_pass(subpass)
+                .build(queue.device().clone())
+                .unwrap(),
+        );
 
         let descriptor_set = input.into_descriptor_set(pipeline.as_ref());
 
@@ -49,6 +36,10 @@ impl CompositionSystem {
             pipeline,
             descriptor_set,
         }
+    }
+
+    pub fn update_input(&mut self, input: ComposingSystemInput) {
+        self.descriptor_set = input.into_descriptor_set(self.pipeline.as_ref());
     }
 
     pub fn draw(&self, dynamic_state: &DynamicState) -> AutoCommandBuffer {
@@ -77,7 +68,7 @@ pub struct ComposingSystemInput {
     pub depth: Arc<AttachmentImage>,
 }
 
-impl ComposingSystemInput {
+impl IntoDescriptorSet for ComposingSystemInput {
     fn into_descriptor_set(
         self,
         pipeline: &(dyn GraphicsPipelineAbstract + Send + Sync),

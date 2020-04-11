@@ -1,6 +1,7 @@
 use super::composition_system::*;
 use super::lighting_systems::*;
 use super::prelude::*;
+use crate::rendering::screen_quad::ScreenQuad;
 
 pub struct FrameSystem {
     surface: Arc<Surface<Window>>,
@@ -18,7 +19,7 @@ pub struct FrameSystem {
     ambient_lighting_system: AmbientLightingSystem,
     directional_lighting_system: DirectionalLightingSystem,
 
-    composition_system: CompositionSystem,
+    composing_system: ComposingSystem,
 }
 
 impl FrameSystem {
@@ -122,14 +123,24 @@ impl FrameSystem {
             &mut dynamic_state,
         );
 
-        let lighting_subpass = Subpass::from(render_pass.clone(), 1).unwrap();
-        let ambient_lighting_system =
-            AmbientLightingSystem::new(queue.clone(), lighting_subpass.clone(), attachments.clone().into());
-        let directional_lighting_system =
-            DirectionalLightingSystem::new(queue.clone(), lighting_subpass.clone(), attachments.clone().into());
+        let screen_quad = ScreenQuad::new(queue.clone());
 
-        let composition_subpass = Subpass::from(render_pass.clone(), 2).unwrap();
-        let composition_system = CompositionSystem::new(queue.clone(), composition_subpass, attachments.clone().into());
+        let lighting_subpass = Subpass::from(render_pass.clone(), 1).unwrap();
+        let ambient_lighting_system = AmbientLightingSystem::new(queue.clone(), lighting_subpass.clone(), &screen_quad);
+        let directional_lighting_system = DirectionalLightingSystem::new(
+            queue.clone(),
+            lighting_subpass.clone(),
+            &screen_quad,
+            attachments.clone().into(),
+        );
+
+        let composing_subpass = Subpass::from(render_pass.clone(), 2).unwrap();
+        let composing_system = ComposingSystem::new(
+            queue.clone(),
+            composing_subpass,
+            &screen_quad,
+            attachments.clone().into(),
+        );
 
         let frame_future = Some(Box::new(vulkano::sync::now(queue.device().clone())) as Box<dyn GpuFuture>);
 
@@ -145,7 +156,7 @@ impl FrameSystem {
             frame_future,
             ambient_lighting_system,
             directional_lighting_system,
-            composition_system,
+            composing_system,
         }
     }
 
@@ -159,7 +170,7 @@ impl FrameSystem {
         self.should_recreate_swapchain = true;
     }
 
-    pub fn frame<'s, 'w>(&'s mut self) -> Option<Frame<'s>> {
+    pub fn frame(&mut self) -> Option<Frame> {
         self.frame_future.as_mut().unwrap().cleanup_finished();
 
         if self.should_recreate_swapchain {
@@ -179,6 +190,11 @@ impl FrameSystem {
                 self.render_pass.clone(),
                 &mut self.dynamic_state,
             );
+
+            self.directional_lighting_system
+                .update_input(self.attachments.clone().into());
+
+            self.composing_system.update_input(self.attachments.clone().into());
 
             self.should_recreate_swapchain = false;
         }
@@ -370,6 +386,22 @@ impl<'s> Frame<'s> {
             _ => None,
         }
     }
+
+    #[inline]
+    fn execute_secondary_buffer<C>(&mut self, command_buffer: C)
+    where
+        C: CommandBuffer + Send + Sync + 'static,
+    {
+        unsafe {
+            self.command_buffer = Some(
+                self.command_buffer
+                    .take()
+                    .unwrap()
+                    .execute_commands(command_buffer)
+                    .unwrap(),
+            )
+        }
+    }
 }
 
 pub enum Pass<'f, 's: 'f> {
@@ -388,16 +420,7 @@ impl<'f, 's: 'f> DrawPass<'f, 's> {
     where
         C: CommandBuffer + Send + Sync + 'static,
     {
-        unsafe {
-            self.frame.command_buffer = Some(
-                self.frame
-                    .command_buffer
-                    .take()
-                    .unwrap()
-                    .execute_commands(command_buffer)
-                    .unwrap(),
-            )
-        }
+        self.frame.execute_secondary_buffer(command_buffer);
     }
 
     #[inline]
@@ -418,16 +441,7 @@ impl<'f, 's: 'f> LightingPass<'f, 's> {
             .ambient_lighting_system
             .draw(&self.frame.system.dynamic_state, color);
 
-        unsafe {
-            self.frame.command_buffer = Some(
-                self.frame
-                    .command_buffer
-                    .take()
-                    .unwrap()
-                    .execute_commands(command_buffer)
-                    .unwrap(),
-            )
-        }
+        self.frame.execute_secondary_buffer(command_buffer);
     }
 
     pub fn directional(&mut self, color: [f32; 3], direction: [f32; 3]) {
@@ -437,16 +451,7 @@ impl<'f, 's: 'f> LightingPass<'f, 's> {
                 .directional_lighting_system
                 .draw(&self.frame.system.dynamic_state, color, direction);
 
-        unsafe {
-            self.frame.command_buffer = Some(
-                self.frame
-                    .command_buffer
-                    .take()
-                    .unwrap()
-                    .execute_commands(command_buffer)
-                    .unwrap(),
-            )
-        }
+        self.frame.execute_secondary_buffer(command_buffer);
     }
 }
 
@@ -459,19 +464,10 @@ impl<'f, 's: 'f> ComposingPass<'f, 's> {
         let command_buffer = self
             .frame
             .system
-            .composition_system
+            .composing_system
             .draw(&self.frame.system.dynamic_state);
 
-        unsafe {
-            self.frame.command_buffer = Some(
-                self.frame
-                    .command_buffer
-                    .take()
-                    .unwrap()
-                    .execute_commands(command_buffer)
-                    .unwrap(),
-            )
-        }
+        self.frame.execute_secondary_buffer(command_buffer);
     }
 }
 
@@ -483,7 +479,7 @@ struct Attachments {
     depth: Arc<AttachmentImage>,
 }
 
-impl From<Attachments> for LightingSystemInput {
+impl From<Attachments> for DirectionalLightingSystemInput {
     fn from(attachments: Attachments) -> Self {
         Self {
             diffuse: attachments.diffuse,

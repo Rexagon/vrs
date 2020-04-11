@@ -1,44 +1,58 @@
 use crate::rendering::prelude::*;
+use crate::rendering::screen_quad::*;
 
-use super::{LightingSystem, LightingSystemData, LightingSystemInput};
+use super::ScreenQuadExt;
 
-pub struct AmbientLightingSystem(LightingSystemData);
+pub struct AmbientLightingSystem {
+    queue: Arc<Queue>,
+    vertex_buffer: Arc<ScreenQuadVertexBuffer>,
+    pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
+}
 
 impl AmbientLightingSystem {
-    pub fn new<R>(queue: Arc<Queue>, subpass: Subpass<R>, input: LightingSystemInput) -> Self
+    pub fn new<R>(queue: Arc<Queue>, subpass: Subpass<R>, screen_quad: &ScreenQuad) -> Self
     where
         R: RenderPassAbstract + Send + Sync + 'static,
     {
         let fragment_shader =
             fragment_shader::Shader::load(queue.device().clone()).expect("Failed to create fragment shader module");
 
-        Self(Self::prepare_system(
-            queue,
+        let vertex_buffer = screen_quad.vertex_buffer();
+        let pipeline = screen_quad.build_lighting_graphics_pipeline(
+            queue.clone(),
             subpass,
-            input,
             fragment_shader.main_entry_point(),
             (),
-        ))
+        );
+
+        Self {
+            queue,
+            vertex_buffer,
+            pipeline,
+        }
     }
 
     pub fn draw(&self, dynamic_state: &DynamicState, ambient_color: [f32; 3]) -> AutoCommandBuffer {
-        let push_constants = fragment_shader::ty::PushConstants {
+        let push_constants = fragment_shader::ty::LightParameters {
             color: [ambient_color[0], ambient_color[1], ambient_color[2], 1.0],
         };
 
-        self.create_command_buffer(dynamic_state, push_constants)
-    }
-}
-
-impl LightingSystem for AmbientLightingSystem {
-    type ShaderPushConstants = fragment_shader::ty::PushConstants;
-
-    fn inner(&self) -> &LightingSystemData {
-        &self.0
-    }
-
-    fn inner_mut(&mut self) -> &mut LightingSystemData {
-        &mut self.0
+        AutoCommandBufferBuilder::secondary_graphics(
+            self.queue.device().clone(),
+            self.queue.family(),
+            self.pipeline.clone().subpass(),
+        )
+        .unwrap()
+        .draw(
+            self.pipeline.clone(),
+            dynamic_state,
+            vec![self.vertex_buffer.clone()],
+            (),
+            push_constants,
+        )
+        .unwrap()
+        .build()
+        .unwrap()
     }
 }
 
