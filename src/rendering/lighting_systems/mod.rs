@@ -39,6 +39,29 @@ impl ScreenQuadExt for crate::rendering::screen_quad::ScreenQuad {
             self.start_graphics_pipeline()
                 .fragment_shader(fragment_shader, specialization_constants)
                 .blend_collective(LIGHTING_PIPELINE_ATTACHMENT_BLEND)
+                .depth_stencil(DepthStencil {
+                    depth_compare: Compare::Always,
+                    depth_write: false,
+                    depth_bounds_test: DepthBounds::Disabled,
+                    stencil_front: Stencil {
+                        compare: Compare::Equal,
+                        pass_op: StencilOp::Keep,
+                        fail_op: StencilOp::Keep,
+                        depth_fail_op: StencilOp::Keep,
+                        compare_mask: Some(0x80),
+                        write_mask: Some(0x40),
+                        reference: Some(0x80),
+                    },
+                    stencil_back: Stencil {
+                        compare: Compare::Equal,
+                        pass_op: StencilOp::Replace,
+                        fail_op: StencilOp::Keep,
+                        depth_fail_op: StencilOp::Keep,
+                        compare_mask: Some(0x80),
+                        write_mask: Some(0x40),
+                        reference: Some(0x80),
+                    },
+                })
                 .render_pass(subpass)
                 .build(queue.device().clone())
                 .unwrap(),

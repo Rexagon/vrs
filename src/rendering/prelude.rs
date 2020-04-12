@@ -8,6 +8,7 @@ pub use vulkano::format::Format;
 pub use vulkano::framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract, Subpass};
 pub use vulkano::image::{AttachmentImage, ImageViewAccess, SwapchainImage};
 pub use vulkano::pipeline::blend::{AttachmentBlend, BlendFactor, BlendOp};
+pub use vulkano::pipeline::depth_stencil::{Compare, DepthBounds, DepthStencil, Stencil, StencilOp};
 pub use vulkano::pipeline::shader::{GraphicsEntryPointAbstract, SpecializationConstants};
 pub use vulkano::pipeline::viewport::Viewport;
 pub use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};

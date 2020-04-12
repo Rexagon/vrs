@@ -1,12 +1,6 @@
-use std::sync::Arc;
+use vulkano::buffer::{BufferAccess, CpuBufferPool};
 
-use vulkano::buffer::{BufferAccess, BufferUsage, CpuAccessibleBuffer, CpuBufferPool};
-use vulkano::command_buffer::{AutoCommandBuffer, AutoCommandBufferBuilder, DynamicState};
-use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
-use vulkano::descriptor::DescriptorSet;
-use vulkano::device::Queue;
-use vulkano::framebuffer::{RenderPassAbstract, Subpass};
-use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
+use crate::rendering::prelude::*;
 
 pub struct MeshDrawSystem {
     queue: Arc<Queue>,
@@ -33,7 +27,29 @@ impl MeshDrawSystem {
                     .triangle_list()
                     .viewports_dynamic_scissors_irrelevant(1)
                     .fragment_shader(fragment_shader.main_entry_point(), ())
-                    .depth_stencil_simple_depth()
+                    .depth_stencil(DepthStencil {
+                        depth_compare: Compare::Less,
+                        depth_write: true,
+                        depth_bounds_test: DepthBounds::Disabled,
+                        stencil_front: Stencil {
+                            compare: Compare::Always,
+                            pass_op: StencilOp::Replace,
+                            fail_op: StencilOp::Replace,
+                            depth_fail_op: StencilOp::Replace,
+                            compare_mask: Some(0x80),
+                            write_mask: Some(0xff),
+                            reference: Some(0x80),
+                        },
+                        stencil_back: Stencil {
+                            compare: Compare::Always,
+                            pass_op: StencilOp::Replace,
+                            fail_op: StencilOp::Keep,
+                            depth_fail_op: StencilOp::Keep,
+                            compare_mask: Some(0x80),
+                            write_mask: Some(0xff),
+                            reference: Some(0x80),
+                        },
+                    })
                     .render_pass(subpass)
                     .build(queue.device().clone())
                     .unwrap(),

@@ -100,7 +100,7 @@ impl FrameSystem {
                     },
                     {
                         color: [light],
-                        depth_stencil: {},
+                        depth_stencil: {depth},
                         input: [diffuse, normals/*, depth*/]
                     },
                     {
