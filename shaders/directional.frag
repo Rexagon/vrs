@@ -14,7 +14,7 @@ void main() {
     vec3 color = light_parameters.color.rgb;
     float intensity = light_parameters.color.a;
 
-    vec3 normal = normalize(subpassLoad(u_normal).rgb);
+    vec3 normal = normalize((subpassLoad(u_normal).rgb  * 2.0 - 1.0));
 
     float light = clamp(dot(normal, -normalize(light_parameters.direction.xyz)), 0.0, 1.0);
 

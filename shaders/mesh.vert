@@ -15,7 +15,6 @@ layout(push_constant) uniform MeshData {
 } mesh_data;
 
 void main() {
-    mat4 view_transform = world_data.view * mesh_data.transform;
-    v_normal = transpose(inverse(mat3(view_transform))) * normal;
-    gl_Position = world_data.projection * view_transform * vec4(position, 1.0);
+    v_normal = transpose(inverse(mat3(mesh_data.transform))) * normal;
+    gl_Position = world_data.projection * world_data.view * mesh_data.transform * vec4(position, 1.0);
 }

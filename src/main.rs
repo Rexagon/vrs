@@ -54,6 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &DeviceExtensions {
             khr_storage_buffer_storage_class: true,
             khr_swapchain: true,
+            khr_maintenance1: true,
             ..DeviceExtensions::none()
         },
         [(queue_family, 0.5)].iter().cloned(),
@@ -73,7 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             view: glm::look_at_rh(
                 &glm::Vec3::new(0.0, 3.0, -10.0),
                 &glm::Vec3::new(0.0, 0.0, 0.0),
-                &glm::Vec3::new(0.0, -1.0, 0.0),
+                &glm::Vec3::new(0.0, 1.0, 0.0),
             ),
             projection: glm::infinite_perspective_rh_zo(surface.window().aspect(), f32::to_radians(75.0), 0.01),
         }
@@ -113,9 +114,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         &mesh_state,
                     )),
                     Pass::Lighting(mut lighting_pass) => {
-                        lighting_pass.ambient(0.2, [1.0, 1.0, 1.0]);
-                        lighting_pass.directional(10.0, [1.0, 0.7, 0.7], [-0.5, 0.4, -0.5]);
-                        lighting_pass.directional(10.0, [0.7, 0.7, 1.0], [0.5, 0.5, 0.5]);
+                        lighting_pass.ambient(0.1, [1.0, 1.0, 1.0]);
+                        lighting_pass.directional(0.9, [1.0, 1.0, 1.0], [0.0, -1.0, 0.0]);
+                        lighting_pass.directional(1.0, [1.0, 0.1, 0.1], [0.0, 0.0, 1.0]);
                     }
                     Pass::Compose(mut composing_pass) => {
                         composing_pass.compose();

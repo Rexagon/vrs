@@ -56,7 +56,7 @@ impl FrameSystem {
             .expect("Failed to create swapchain")
         };
 
-        let attachments = Self::create_attachments(queue.device().clone(), dimensions);
+        let attachments = Attachments::new(queue.device().clone(), dimensions);
 
         let render_pass = Arc::new(
             vulkano::ordered_passes_renderpass!(queue.device().clone(),
@@ -182,7 +182,7 @@ impl FrameSystem {
             };
 
             self.swapchain = swapchain;
-            self.attachments = Self::create_attachments(self.queue.device().clone(), dimensions);
+            self.attachments = Attachments::new(self.queue.device().clone(), dimensions);
             self.framebuffers = Self::create_framebuffers(
                 dimensions,
                 swapchain_images,
@@ -219,30 +219,6 @@ impl FrameSystem {
     }
 
     #[inline]
-    fn create_attachments(device: Arc<Device>, dimensions: [u32; 2]) -> Attachments {
-        let diffuse =
-            AttachmentImage::transient_input_attachment(device.clone(), dimensions, Format::A2B10G10R10UnormPack32)
-                .unwrap();
-
-        let normals =
-            AttachmentImage::transient_input_attachment(device.clone(), dimensions, Format::A2B10G10R10UnormPack32)
-                .unwrap();
-
-        let light =
-            AttachmentImage::transient_input_attachment(device.clone(), dimensions, Format::A2B10G10R10UnormPack32)
-                .unwrap();
-
-        let depth = AttachmentImage::transient_input_attachment(device, dimensions, Format::D32Sfloat).unwrap();
-
-        Attachments {
-            diffuse,
-            normals,
-            light,
-            depth,
-        }
-    }
-
-    #[inline]
     fn create_framebuffers(
         dimensions: [u32; 2],
         swapchain_images: Vec<Arc<SwapchainImage<Window>>>,
@@ -251,8 +227,8 @@ impl FrameSystem {
         dynamic_state: &mut DynamicState,
     ) -> Vec<Arc<dyn FramebufferAbstract + Send + Sync>> {
         let viewport = Viewport {
-            origin: [0.0, 0.0],
-            dimensions: [dimensions[0] as f32, dimensions[1] as f32],
+            origin: [0.0, dimensions[1] as f32],
+            dimensions: [dimensions[0] as f32, -(dimensions[1] as f32)],
             depth_range: 0.0..1.0,
         };
 
@@ -326,7 +302,7 @@ impl<'s> Frame<'s> {
                             [0.0, 0.0, 0.0, 0.0].into(),
                             [0.0, 0.0, 0.0, 0.0].into(),
                             [0.0, 0.0, 0.0, 0.0].into(),
-                            1.0f32.into(),
+                            (1.0, 0x00).into(),
                         ],
                     )
                     .unwrap(),
@@ -478,6 +454,31 @@ struct Attachments {
     normals: Arc<AttachmentImage>,
     light: Arc<AttachmentImage>,
     depth: Arc<AttachmentImage>,
+}
+
+impl Attachments {
+    fn new(device: Arc<Device>, dimensions: [u32; 2]) -> Self {
+        let diffuse =
+            AttachmentImage::transient_input_attachment(device.clone(), dimensions, Format::A2B10G10R10UnormPack32)
+                .unwrap();
+
+        let normals =
+            AttachmentImage::transient_input_attachment(device.clone(), dimensions, Format::A2B10G10R10UnormPack32)
+                .unwrap();
+
+        let light =
+            AttachmentImage::transient_input_attachment(device.clone(), dimensions, Format::A2B10G10R10UnormPack32)
+                .unwrap();
+
+        let depth = AttachmentImage::transient_input_attachment(device, dimensions, Format::D24Unorm_S8Uint).unwrap();
+
+        Self {
+            diffuse,
+            normals,
+            light,
+            depth,
+        }
+    }
 }
 
 impl From<Attachments> for DirectionalLightingSystemInput {

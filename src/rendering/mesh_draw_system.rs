@@ -110,8 +110,8 @@ impl MeshDrawSystem {
                 .and_then(|positions_iter| reader.read_normals().map(|normals_iter| (positions_iter, normals_iter)))
                 .map(|(positions_iter, normals_iter)| {
                     positions_iter.zip(normals_iter).map(|(position, normal)| Vertex {
-                        position: [-position[0], position[2], position[1]],
-                        normal: [-normal[0], normal[2], normal[1]],
+                        position: [position[0], position[2], position[1]],
+                        normal: [normal[0], normal[2], normal[1]],
                     })
                 })
                 .unwrap()
