@@ -111,7 +111,7 @@ impl MeshDrawSystem {
     pub fn create_simple_mesh(&self) -> (Arc<CpuAccessibleBuffer<[Vertex]>>, Arc<CpuAccessibleBuffer<[u16]>>) {
         // TODO: move into separate model loading system
 
-        let file = std::fs::File::open("./models/monkey.glb").unwrap();
+        let file = std::fs::File::open("./models/cube.glb").unwrap();
         let reader = std::io::BufReader::new(file);
         let gltf = gltf::Gltf::from_reader(reader).unwrap();
 
@@ -128,8 +128,8 @@ impl MeshDrawSystem {
                 .and_then(|positions_iter| reader.read_normals().map(|normals_iter| (positions_iter, normals_iter)))
                 .map(|(positions_iter, normals_iter)| {
                     positions_iter.zip(normals_iter).map(|(position, normal)| Vertex {
-                        position: [position[0], position[2], position[1]],
-                        normal: [normal[0], normal[2], normal[1]],
+                        position: [position[0], -position[2], position[1]],
+                        normal: [normal[0], -normal[2], normal[1]],
                     })
                 })
                 .unwrap()

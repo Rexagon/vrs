@@ -66,7 +66,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut world_state = WorldState::default();
     world_state.set_view(glm::look_at_rh(
-        &glm::Vec3::new(-3.0, 3.0, -10.0),
+        &glm::Vec3::new(2.0, 2.0, 2.0),
         &glm::Vec3::new(0.0, 0.0, 0.0),
         &glm::Vec3::new(0.0, 1.0, 0.0),
     ));
@@ -112,8 +112,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     )),
                     Pass::Lighting(mut lighting_pass) => {
                         lighting_pass.ambient(0.1, [1.0, 1.0, 1.0]);
-                        lighting_pass.directional(0.9, [1.0, 1.0, 1.0], [0.0, -1.0, 0.0]);
-                        lighting_pass.directional(1.0, [1.0, 0.1, 0.1], [0.0, 0.0, 1.0]);
+                        lighting_pass.directional(0.5, [1.0, 0.1, 0.1], [-1.0, 0.0, 0.0]);
+                        lighting_pass.directional(0.5, [0.1, 1.1, 0.1], [0.0, -1.0, 0.0]);
+                        lighting_pass.directional(0.5, [0.1, 0.1, 1.0], [0.0, 0.0, -1.0]);
                     }
                     Pass::Compose(mut composing_pass) => {
                         composing_pass.compose();
@@ -134,6 +135,9 @@ impl WorldStateExt for WorldState {
         let size = window.inner_size();
         let aspect = size.width as f32 / size.height as f32;
 
-        self.set_projection(glm::infinite_perspective_rh_zo(aspect, f32::to_radians(75.0), 0.01));
+        let mut projection = glm::infinite_perspective_rh_zo(aspect, f32::to_radians(75.0), 0.01);
+        projection.m22 *= -1.0;
+
+        self.set_projection(projection);
     }
 }
