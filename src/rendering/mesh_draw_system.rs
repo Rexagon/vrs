@@ -10,7 +10,7 @@ pub struct MeshDrawSystem {
 }
 
 impl MeshDrawSystem {
-    pub fn new<R>(queue: Arc<Queue>, subpass: Subpass<R>) -> Self
+    pub fn new<R>(queue: Arc<Queue>, subpass: Subpass<R>, world_state: &WorldState) -> Self
     where
         R: RenderPassAbstract + Send + Sync + 'static,
     {
@@ -59,8 +59,9 @@ impl MeshDrawSystem {
         let mut world_uniform_buffer_pool =
             CpuBufferPool::<vertex_shader::ty::WorldData>::new(queue.device().clone(), BufferUsage::all());
 
-        let world_descriptor_set =
-            WorldState::default().into_descriptor_set(pipeline.as_ref(), &mut world_uniform_buffer_pool);
+        let world_descriptor_set = world_state
+            .clone()
+            .into_descriptor_set(pipeline.as_ref(), &mut world_uniform_buffer_pool);
 
         Self {
             queue,
@@ -70,9 +71,10 @@ impl MeshDrawSystem {
         }
     }
 
-    pub fn set_world_state(&mut self, world_state: WorldState) {
-        self.world_descriptor_set =
-            world_state.into_descriptor_set(self.pipeline.as_ref(), &mut self.world_uniform_buffer_pool);
+    pub fn set_world_state(&mut self, world_state: &WorldState) {
+        self.world_descriptor_set = world_state
+            .clone()
+            .into_descriptor_set(self.pipeline.as_ref(), &mut self.world_uniform_buffer_pool);
     }
 
     pub fn draw<V>(
@@ -152,11 +154,19 @@ impl MeshDrawSystem {
 
 #[derive(Clone)]
 pub struct WorldState {
-    pub view: glm::Mat4,
-    pub projection: glm::Mat4,
+    view: glm::Mat4,
+    projection: glm::Mat4,
 }
 
 impl WorldState {
+    pub fn set_view(&mut self, view: glm::Mat4) {
+        self.view = view;
+    }
+
+    pub fn set_projection(&mut self, projection: glm::Mat4) {
+        self.projection = projection;
+    }
+
     pub fn into_descriptor_set(
         self,
         pipeline: &(dyn GraphicsPipelineAbstract + Send + Sync),

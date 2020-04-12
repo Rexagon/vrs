@@ -13,6 +13,7 @@ use winit::{
     dpi::LogicalSize,
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
+    window::Window,
     window::WindowBuilder,
 };
 
@@ -63,24 +64,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let queue = queues.next().unwrap();
 
+    let mut world_state = WorldState::default();
+    world_state.set_view(glm::look_at_rh(
+        &glm::Vec3::new(-3.0, 3.0, -10.0),
+        &glm::Vec3::new(0.0, 0.0, 0.0),
+        &glm::Vec3::new(0.0, 1.0, 0.0),
+    ));
+    world_state.update_projection(surface.window());
+
     let mut frame_system = FrameSystem::new(surface.clone(), queue.clone());
-    let mut mesh_draw_system = MeshDrawSystem::new(queue.clone(), frame_system.deferred_subpass());
+    let mut mesh_draw_system = MeshDrawSystem::new(queue.clone(), frame_system.deferred_subpass(), &world_state);
 
     let mesh = mesh_draw_system.create_simple_mesh();
 
-    let create_world_state = {
-        let surface = surface.clone();
-        move || WorldState {
-            view: glm::look_at_rh(
-                &glm::Vec3::new(0.0, 3.0, -10.0),
-                &glm::Vec3::new(0.0, 0.0, 0.0),
-                &glm::Vec3::new(0.0, 1.0, 0.0),
-            ),
-            projection: glm::infinite_perspective_rh_zo(surface.window().aspect(), f32::to_radians(75.0), 0.01),
-        }
-    };
-
-    mesh_draw_system.set_world_state(create_world_state());
     let mesh_state = MeshState {
         transform: glm::translation(&glm::Vec3::new(0.0, 0.0, 0.0)),
     };
@@ -97,7 +93,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..
         } => {
             frame_system.invalidate_swapchain();
-            mesh_draw_system.set_world_state(create_world_state());
+            world_state.update_projection(surface.window());
+            mesh_draw_system.set_world_state(&world_state);
         }
         Event::RedrawEventsCleared => {
             let mut frame = match frame_system.frame() {
@@ -128,13 +125,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 }
 
-trait WindowExt {
-    fn aspect(&self) -> f32;
+trait WorldStateExt {
+    fn update_projection(&mut self, surface: &Window);
 }
 
-impl WindowExt for winit::window::Window {
-    fn aspect(&self) -> f32 {
-        let size = self.inner_size();
-        size.width as f32 / size.height as f32
+impl WorldStateExt for WorldState {
+    fn update_projection(&mut self, window: &Window) {
+        let size = window.inner_size();
+        let aspect = size.width as f32 / size.height as f32;
+
+        self.set_projection(glm::infinite_perspective_rh_zo(aspect, f32::to_radians(75.0), 0.01));
     }
 }
