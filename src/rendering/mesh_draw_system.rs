@@ -1,4 +1,4 @@
-use vulkano::buffer::{BufferAccess, CpuBufferPool};
+use vulkano::buffer::{CpuBufferPool, TypedBufferAccess};
 
 use crate::rendering::prelude::*;
 
@@ -10,9 +10,10 @@ pub struct MeshDrawSystem {
 }
 
 impl MeshDrawSystem {
-    pub fn new<R>(queue: Arc<Queue>, subpass: Subpass<R>, world_state: &WorldState) -> Self
+    pub fn new<R, V>(queue: Arc<Queue>, subpass: Subpass<R>, view_data_source: &V) -> Self
     where
         R: RenderPassAbstract + Send + Sync + 'static,
+        V: ViewDataSource,
     {
         let pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync> = {
             let vertex_shader =
@@ -59,9 +60,8 @@ impl MeshDrawSystem {
         let mut world_uniform_buffer_pool =
             CpuBufferPool::<vertex_shader::ty::WorldData>::new(queue.device().clone(), BufferUsage::all());
 
-        let world_descriptor_set = world_state
-            .clone()
-            .into_descriptor_set(pipeline.as_ref(), &mut world_uniform_buffer_pool);
+        let world_descriptor_set =
+            view_data_source.create_descriptor_set(pipeline.as_ref(), &mut world_uniform_buffer_pool);
 
         Self {
             queue,
@@ -71,21 +71,17 @@ impl MeshDrawSystem {
         }
     }
 
-    pub fn set_world_state(&mut self, world_state: &WorldState) {
-        self.world_descriptor_set = world_state
-            .clone()
-            .into_descriptor_set(self.pipeline.as_ref(), &mut self.world_uniform_buffer_pool);
+    pub fn update_view<V>(&mut self, view_data_source: &V)
+    where
+        V: ViewDataSource,
+    {
+        self.world_descriptor_set =
+            view_data_source.create_descriptor_set(self.pipeline.as_ref(), &mut self.world_uniform_buffer_pool);
     }
 
-    pub fn draw<V>(
-        &self,
-        dynamic_state: &DynamicState,
-        vertex_buffer: Arc<V>,
-        index_buffer: Arc<CpuAccessibleBuffer<[u16]>>,
-        mesh_state: &MeshState,
-    ) -> AutoCommandBuffer
+    pub fn draw<D>(&self, dynamic_state: &DynamicState, drawable: &D, mesh_state: &MeshState) -> AutoCommandBuffer
     where
-        V: BufferAccess + Send + Sync + 'static,
+        D: DrawableDataSource,
     {
         let push_constants: vertex_shader::ty::MeshData = mesh_state.into();
 
@@ -98,8 +94,8 @@ impl MeshDrawSystem {
         .draw_indexed(
             self.pipeline.clone(),
             dynamic_state,
-            vec![vertex_buffer],
-            index_buffer,
+            vec![drawable.vertex_buffer()],
+            drawable.index_buffer(),
             self.world_descriptor_set.clone(),
             push_constants,
         )
@@ -107,11 +103,24 @@ impl MeshDrawSystem {
         .build()
         .unwrap()
     }
+}
 
-    pub fn create_simple_mesh(&self) -> (Arc<CpuAccessibleBuffer<[Vertex]>>, Arc<CpuAccessibleBuffer<[u16]>>) {
-        // TODO: move into separate model loading system
+pub trait DrawableDataSource {
+    type VertexBuffer: TypedBufferAccess<Content = [Vertex]> + Send + Sync + 'static;
+    type IndexBuffer: TypedBufferAccess<Content = [u32]> + Send + Sync + 'static;
 
-        let file = std::fs::File::open("./models/cube.glb").unwrap();
+    fn vertex_buffer(&self) -> Arc<Self::VertexBuffer>;
+    fn index_buffer(&self) -> Arc<Self::IndexBuffer>;
+}
+
+pub struct SimpleMesh {
+    vertex_buffer: Arc<CpuAccessibleBuffer<[Vertex]>>,
+    index_buffer: Arc<CpuAccessibleBuffer<[u32]>>,
+}
+
+impl SimpleMesh {
+    pub fn new(queue: Arc<Queue>, path: &str) -> Self {
+        let file = std::fs::File::open(path).unwrap();
         let reader = std::io::BufReader::new(file);
         let gltf = gltf::Gltf::from_reader(reader).unwrap();
 
@@ -122,7 +131,7 @@ impl MeshDrawSystem {
 
         let reader = primitive.reader(|_| Some(buffer));
 
-        let vertex_buffer = CpuAccessibleBuffer::from_iter(self.queue.device().clone(), BufferUsage::all(), false, {
+        let vertex_buffer = CpuAccessibleBuffer::from_iter(queue.device().clone(), BufferUsage::all(), false, {
             reader
                 .read_positions()
                 .and_then(|positions_iter| reader.read_normals().map(|normals_iter| (positions_iter, normals_iter)))
@@ -137,44 +146,66 @@ impl MeshDrawSystem {
         .expect("Failed to create vertex buffer");
 
         let index_buffer = CpuAccessibleBuffer::from_iter(
-            self.queue.device().clone(),
+            queue.device().clone(),
             BufferUsage::all(),
             false,
             match reader.read_indices().unwrap() {
-                gltf::mesh::util::ReadIndices::U8(iter) => itertools::Either::Left(iter.map(|index| index as u16)),
-                gltf::mesh::util::ReadIndices::U16(iter) => itertools::Either::Right(iter),
-                gltf::mesh::util::ReadIndices::U32(_) => panic!("Not yet"),
+                gltf::mesh::util::ReadIndices::U8(iter) => {
+                    itertools::Either::Left(itertools::Either::Left(iter.map(|index| index as u32)))
+                }
+                gltf::mesh::util::ReadIndices::U16(iter) => {
+                    itertools::Either::Left(itertools::Either::Right(iter.map(|index| index as u32)))
+                }
+                gltf::mesh::util::ReadIndices::U32(iter) => itertools::Either::Right(iter),
             },
         )
         .expect("Failed to create index buffer");
 
-        (vertex_buffer, index_buffer)
+        Self {
+            vertex_buffer,
+            index_buffer,
+        }
     }
 }
 
-#[derive(Clone)]
-pub struct WorldState {
-    view: glm::Mat4,
-    projection: glm::Mat4,
+impl DrawableDataSource for SimpleMesh {
+    type VertexBuffer = CpuAccessibleBuffer<[Vertex]>;
+    type IndexBuffer = CpuAccessibleBuffer<[u32]>;
+
+    fn vertex_buffer(&self) -> Arc<Self::VertexBuffer> {
+        self.vertex_buffer.clone()
+    }
+
+    fn index_buffer(&self) -> Arc<Self::IndexBuffer> {
+        self.index_buffer.clone()
+    }
 }
 
-impl WorldState {
-    pub fn set_view(&mut self, view: glm::Mat4) {
-        self.view = view;
-    }
+pub trait ViewDataSource {
+    fn view(&self) -> glm::Mat4;
+    fn projection(&self) -> glm::Mat4;
+}
 
-    pub fn set_projection(&mut self, projection: glm::Mat4) {
-        self.projection = projection;
-    }
+trait ViewDescriptorSetFactory {
+    fn create_descriptor_set(
+        &self,
+        pipeline: &(dyn GraphicsPipelineAbstract + Send + Sync),
+        uniform_buffer_pool: &mut CpuBufferPool<vertex_shader::ty::WorldData>,
+    ) -> Arc<dyn DescriptorSet + Send + Sync>;
+}
 
-    pub fn into_descriptor_set(
-        self,
+impl<T> ViewDescriptorSetFactory for T
+where
+    T: ViewDataSource,
+{
+    fn create_descriptor_set(
+        &self,
         pipeline: &(dyn GraphicsPipelineAbstract + Send + Sync),
         uniform_buffer_pool: &mut CpuBufferPool<vertex_shader::ty::WorldData>,
     ) -> Arc<dyn DescriptorSet + Send + Sync> {
         let uniform_data = vertex_shader::ty::WorldData {
-            view: self.view.into(),
-            projection: self.projection.into(),
+            view: self.view().into(),
+            projection: self.projection().into(),
         };
 
         let uniform_buffer = uniform_buffer_pool.next(uniform_data).unwrap();
@@ -186,15 +217,6 @@ impl WorldState {
                 .build()
                 .unwrap(),
         )
-    }
-}
-
-impl Default for WorldState {
-    fn default() -> Self {
-        Self {
-            view: glm::Mat4::identity(),
-            projection: glm::Mat4::identity(),
-        }
     }
 }
 
