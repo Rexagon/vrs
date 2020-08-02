@@ -2,166 +2,284 @@
 
 extern crate nalgebra_glm as glm;
 
-mod rendering;
+use std::ffi::{c_void, CStr, CString};
+use std::os::raw::c_char;
 
-use std::sync::Arc;
-
-use vulkano::device::{Device, DeviceExtensions, Features};
-use vulkano::instance::{Instance, PhysicalDevice, QueueFamily};
-use vulkano::swapchain::Surface;
-use vulkano_win::VkSurfaceBuild;
+use anyhow::{Error, Result};
+use ash::version::InstanceV1_0;
+use ash::{version::EntryV1_0, vk};
 use winit::dpi::LogicalSize;
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
-use winit::window::{Window, WindowBuilder};
+use winit::window::Window;
 
-use crate::rendering::*;
+const APPLICATION_NAME: &str = "vrs";
+const ENGINE_TITLE: &str = "ash";
+const APPLICATION_VERSION: u32 = vk::make_version(1, 0, 0);
+const ENGINE_VERSION: u32 = vk::make_version(1, 0, 0);
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::init();
+const VALIDATION: ValidationInfo = ValidationInfo {
+    is_enabled: true,
+    required_validation_layers: ["VK_LAYER_KHRONOS_validation"],
+};
 
-    let instance = {
-        let extensions = vulkano_win::required_extensions();
-        Instance::new(None, &extensions, None)?
+fn from_vk_string(raw_string_array: &[c_char]) -> Result<String> {
+    let raw_string = unsafe {
+        let pointer = raw_string_array.as_ptr();
+        CStr::from_ptr(pointer)
     };
 
-    let events_loop = EventLoop::new();
-    let surface = WindowBuilder::new()
-        .with_min_inner_size(LogicalSize::new(800, 600))
-        .with_inner_size(LogicalSize::new(1280, 768))
-        .with_title("vrs")
-        .build_vk_surface(&events_loop, instance.clone())
-        .unwrap();
+    Ok(raw_string.to_str()?.to_owned())
+}
 
-    let physical = PhysicalDevice::enumerate(&instance)
-        .next()
-        .expect("No device available");
+struct App {
+    _entry: ash::Entry,
+    instance: ash::Instance,
+    surface: vk::SurfaceKHR,
+    surface_fn: ash::extensions::khr::Surface,
+    debug_utils_loader: ash::extensions::ext::DebugUtils,
+    debug_messenger: vk::DebugUtilsMessengerEXT,
+}
 
-    let queue_family = physical
-        .queue_families()
-        .filter(|&family| family.supports_graphics() && surface.is_supported(family).unwrap_or(false))
-        .fold(None, |result: Option<QueueFamily>, family| match result {
-            Some(result) if family.queues_count() > result.queues_count() => Some(family),
-            Some(_) => result,
-            _ => Some(family),
-        })
-        .expect("Failed to find a graphical queue family");
+struct ValidationInfo {
+    pub is_enabled: bool,
+    pub required_validation_layers: [&'static str; 1],
+}
 
-    let (_device, mut queues) = Device::new(
-        physical,
-        &Features::none(),
-        &DeviceExtensions {
-            khr_storage_buffer_storage_class: true,
-            khr_swapchain: true,
-            khr_maintenance1: true,
-            ..DeviceExtensions::none()
-        },
-        [(queue_family, 0.5)].iter().cloned(),
-    )
-    .expect("Failed to create device");
-
-    let queue = queues.next().unwrap();
-
-    let mut camera = Camera::new(surface.clone());
-    camera.set_view(glm::look_at_rh(
-        &glm::Vec3::new(2.0, 2.0, 2.0),
-        &glm::Vec3::new(0.0, 0.0, 0.0),
-        &glm::Vec3::new(0.0, 1.0, 0.0),
-    ));
-
-    let mut frame_system = FrameSystem::new(surface.clone(), queue.clone());
-    let mut mesh_draw_system = MeshDrawSystem::new(queue.clone(), frame_system.deferred_subpass(), &camera);
-
-    let mesh = SimpleMesh::new(queue.clone(), "./models/cube.glb");
-    let mesh_state = MeshState {
-        transform: glm::translation(&glm::Vec3::new(0.0, 0.0, 0.0)),
+unsafe extern "system" fn vulkan_debug_utils_callback(
+    message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
+    message_type: vk::DebugUtilsMessageTypeFlagsEXT,
+    p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
+    _p_user_data: *mut c_void,
+) -> vk::Bool32 {
+    let message_type = match message_type {
+        vk::DebugUtilsMessageTypeFlagsEXT::GENERAL => "[GENERAL]",
+        vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE => "[PERFORMANCE]",
+        vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION => "[VALIDATION]",
+        _ => "[UNKNOWN]",
     };
 
-    events_loop.run(move |event, _, control_flow| match event {
-        Event::WindowEvent {
-            event: WindowEvent::CloseRequested,
-            ..
-        } => {
-            *control_flow = ControlFlow::Exit;
-        }
-        Event::WindowEvent {
-            event: WindowEvent::Resized(_),
-            ..
-        } => {
-            frame_system.invalidate_swapchain();
-            camera.update_projection();
-            mesh_draw_system.update_view(&camera);
-        }
-        Event::RedrawEventsCleared => {
-            let mut frame = match frame_system.frame() {
-                Some(frame) => frame,
-                None => return,
-            };
+    let message = CStr::from_ptr((*p_callback_data).p_message);
+    match message_severity {
+        vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE => log::debug!("{} {:?}", message_type, message),
+        vk::DebugUtilsMessageSeverityFlagsEXT::WARNING => log::warn!("{} {:?}", message_type, message),
+        vk::DebugUtilsMessageSeverityFlagsEXT::ERROR => log::warn!("{} {:?}", message_type, message),
+        vk::DebugUtilsMessageSeverityFlagsEXT::INFO => log::info!("{} {:?}", message_type, message),
+        _ => log::trace!("{} {:?}", message_type, message),
+    }
 
-            while let Some(pass) = frame.next_pass() {
-                match pass {
-                    Pass::Draw(mut draw_pass) => {
-                        draw_pass.execute(mesh_draw_system.draw(draw_pass.dynamic_state(), &mesh, &mesh_state))
-                    }
-                    Pass::Lighting(mut lighting_pass) => {
-                        lighting_pass.ambient(0.1, [1.0, 1.0, 1.0]);
-                        lighting_pass.directional(0.5, [1.0, 0.1, 0.1], [-1.0, 0.0, 0.0]);
-                        lighting_pass.directional(0.5, [0.1, 1.1, 0.1], [0.0, -1.0, 0.0]);
-                        lighting_pass.directional(0.5, [0.1, 0.1, 1.0], [0.0, 0.0, -1.0]);
-                    }
-                    Pass::Compose(mut composing_pass) => {
-                        composing_pass.compose();
-                    }
+    vk::FALSE
+}
+
+fn populate_debug_messenger_create_info() -> vk::DebugUtilsMessengerCreateInfoEXT {
+    vk::DebugUtilsMessengerCreateInfoEXT::builder()
+        .message_severity(
+            vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
+                | vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE
+                | vk::DebugUtilsMessageSeverityFlagsEXT::INFO
+                | vk::DebugUtilsMessageSeverityFlagsEXT::ERROR,
+        )
+        .message_type(
+            vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
+                | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE
+                | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION,
+        )
+        .pfn_user_callback(Some(vulkan_debug_utils_callback))
+        .build()
+}
+
+impl App {
+    fn new() -> Result<(EventLoop<()>, Window, Self)> {
+        let entry = ash::Entry::new()?;
+
+        let event_loop = EventLoop::new();
+        let window = Self::init_window(&event_loop)?;
+        let instance = Self::create_instance(&entry, &window)?;
+
+        let (debug_utils_loader, debug_messenger) = Self::setup_debug_utils(&entry, &instance)?;
+
+        let surface = unsafe { ash_window::create_surface(&entry, &instance, &window, None)? };
+        let surface_fn = ash::extensions::khr::Surface::new(&entry, &instance);
+        log::debug!("created surface: {:?}", surface);
+
+        Ok((
+            event_loop,
+            window,
+            Self {
+                _entry: entry,
+                instance,
+                surface,
+                surface_fn,
+                debug_utils_loader,
+                debug_messenger,
+            },
+        ))
+    }
+
+    fn init_window(event_loop: &EventLoop<()>) -> Result<winit::window::Window> {
+        let window = winit::window::WindowBuilder::new()
+            .with_min_inner_size(LogicalSize::new(800, 600))
+            .with_inner_size(LogicalSize::new(1024, 768))
+            .build(event_loop)?;
+
+        Ok(window)
+    }
+
+    fn check_validation_error_support(entry: &ash::Entry) -> Result<()> {
+        let layer_properties = entry.enumerate_instance_layer_properties()?;
+
+        if layer_properties.is_empty() {
+            return Err(Error::msg("no available layers found"));
+        }
+
+        for required_layer_name in VALIDATION.required_validation_layers.iter() {
+            let mut is_layer_found = false;
+
+            for layer_property in layer_properties.iter() {
+                let test_layer_name = from_vk_string(&layer_property.layer_name)?;
+                if *required_layer_name == test_layer_name {
+                    is_layer_found = true;
+                    break;
                 }
             }
+
+            if is_layer_found == false {
+                return Err(Error::msg(format!(
+                    "required layer `{}` was not found",
+                    required_layer_name
+                )));
+            }
         }
-        _ => (),
-    });
-}
 
-#[derive(Clone)]
-pub struct Camera {
-    pub view: glm::Mat4,
-    pub projection: glm::Mat4,
+        Ok(())
+    }
 
-    surface: Arc<Surface<Window>>,
-}
+    fn create_instance(entry: &ash::Entry, window: &Window) -> Result<ash::Instance> {
+        if VALIDATION.is_enabled {
+            Self::check_validation_error_support(entry)?;
+        }
 
-impl Camera {
-    pub fn new(surface: Arc<Surface<Window>>) -> Self {
-        let mut camera = Self {
-            view: glm::identity(),
-            projection: glm::identity(),
-            surface,
+        let application_name = CString::new(APPLICATION_NAME)?;
+        let engine_name = CString::new(ENGINE_TITLE)?;
+
+        let app_info = vk::ApplicationInfo::builder()
+            .application_name(&application_name)
+            .engine_name(&engine_name)
+            .application_version(APPLICATION_VERSION)
+            .engine_version(ENGINE_VERSION);
+
+        //
+        let mut required_extensions = ash_window::enumerate_required_extensions(window)?;
+        required_extensions.push(ash::extensions::ext::DebugUtils::name());
+
+        required_extensions.iter().for_each(|extension| {
+            log::debug!("required extension: {:?}", extension);
+        });
+
+        let required_extensions = required_extensions.into_iter().map(CStr::as_ptr).collect::<Vec<_>>();
+
+        //
+        let required_layers = if VALIDATION.is_enabled {
+            VALIDATION
+                .required_validation_layers
+                .iter()
+                .map(|layer_name| unsafe { CStr::from_bytes_with_nul_unchecked(layer_name.as_bytes()) })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
         };
-        camera.update_projection();
 
-        camera
+        required_layers.iter().for_each(|layer| {
+            log::debug!("required layer: {:?}", layer);
+        });
+
+        let required_layers: Vec<*const i8> = required_layers.into_iter().map(CStr::as_ptr).collect::<Vec<_>>();
+
+        //
+        let mut instance_info = vk::InstanceCreateInfo::builder()
+            .application_info(&app_info)
+            .enabled_extension_names(&required_extensions)
+            .enabled_layer_names(&required_layers);
+
+        //
+        let mut debug_utils_create_info = populate_debug_messenger_create_info();
+
+        if VALIDATION.is_enabled {
+            instance_info = instance_info.push_next(&mut debug_utils_create_info);
+        }
+
+        let instance = unsafe { entry.create_instance(&instance_info, None)? };
+        log::debug!("created instance");
+
+        Ok(instance)
     }
 
-    #[inline]
-    pub fn set_view(&mut self, view: glm::Mat4) {
-        self.view = view;
+    fn setup_debug_utils(
+        entry: &ash::Entry,
+        instance: &ash::Instance,
+    ) -> Result<(ash::extensions::ext::DebugUtils, vk::DebugUtilsMessengerEXT)> {
+        let debug_utils_loader = ash::extensions::ext::DebugUtils::new(entry, instance);
+
+        if VALIDATION.is_enabled {
+            let messenger_create_info = populate_debug_messenger_create_info();
+
+            let messenger = unsafe { debug_utils_loader.create_debug_utils_messenger(&messenger_create_info, None)? };
+
+            log::debug!("created debug utils messenger: {:?}", messenger);
+
+            Ok((debug_utils_loader, messenger))
+        } else {
+            Ok((debug_utils_loader, vk::DebugUtilsMessengerEXT::null()))
+        }
     }
 
-    #[inline]
-    pub fn update_projection(&mut self) {
-        let size = self.surface.window().inner_size();
-        let aspect = size.width as f32 / size.height as f32;
+    fn draw_frame(&mut self) {
+        // drawing here
+    }
 
-        let mut projection = glm::infinite_perspective_rh_zo(aspect, f32::to_radians(75.0), 0.01);
-        projection.m22 *= -1.0;
-
-        self.projection = projection;
+    fn run(mut self, event_loop: EventLoop<()>, window: Window) -> ! {
+        event_loop.run(move |event, _, control_flow| match event {
+            Event::WindowEvent {
+                event: WindowEvent::CloseRequested,
+                ..
+            } => {
+                *control_flow = ControlFlow::Exit;
+            }
+            Event::RedrawRequested(_) => {
+                self.draw_frame();
+            }
+            _ => {}
+        })
     }
 }
 
-impl ViewDataSource for Camera {
-    fn view(&self) -> glm::Mat4 {
-        self.view.clone()
-    }
+impl Drop for App {
+    fn drop(&mut self) {
+        unsafe {
+            if VALIDATION.is_enabled {
+                self.debug_utils_loader
+                    .destroy_debug_utils_messenger(self.debug_messenger, None);
+                log::debug!("dropped debug utils messenger");
+            }
 
-    fn projection(&self) -> glm::Mat4 {
-        self.projection.clone()
+            self.surface_fn.destroy_surface(self.surface, None);
+            log::debug!("dropped surface");
+
+            self.instance.destroy_instance(None);
+            log::debug!("dropped instance");
+        }
+    }
+}
+
+fn run() -> Result<()> {
+    let (event_loop, window, app) = App::new()?;
+    app.run(event_loop, window)
+}
+
+fn main() {
+    env_logger::init();
+
+    if let Err(e) = run() {
+        log::error!("{}", e);
     }
 }
