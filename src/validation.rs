@@ -1,41 +1,80 @@
-use std::ffi::{c_void, CStr};
+use std::ffi::{c_void, CStr, CString};
 
 use anyhow::{Error, Result};
 use ash::version::EntryV1_0;
 use ash::vk;
+use once_cell::*;
 
-use crate::utils;
-
-pub struct ValidationInfo {
-    pub is_enabled: bool,
-    pub required_validation_layers: [&'static str; 1],
+pub struct Validation {
+    is_enabled: bool,
+    debug_utils_ext: ash::extensions::ext::DebugUtils,
+    debug_utils_messenger: vk::DebugUtilsMessengerEXT,
 }
 
-pub fn check_validation_error_support(entry: &ash::Entry, validation_info: &ValidationInfo) -> Result<()> {
-    if !validation_info.is_enabled {
-        return Ok(());
+impl Validation {
+    pub fn new(entry: &ash::Entry, instance: &ash::Instance, is_enabled: bool) -> Result<Self> {
+        let debug_utils_ext = ash::extensions::ext::DebugUtils::new(entry, instance);
+
+        let debug_utils_messenger = if is_enabled {
+            let debug_utils_messenger =
+                unsafe { debug_utils_ext.create_debug_utils_messenger(&debug_messenger_create_info(), None)? };
+            log::debug!("created debug utils messenger: {:?}", debug_utils_messenger);
+
+            debug_utils_messenger
+        } else {
+            vk::DebugUtilsMessengerEXT::null()
+        };
+
+        Ok(Self {
+            is_enabled,
+            debug_utils_ext,
+            debug_utils_messenger,
+        })
     }
 
+    #[allow(unused)]
+    #[inline]
+    pub fn is_enabled(&self) -> bool {
+        self.is_enabled
+    }
+
+    #[allow(unused)]
+    #[inline]
+    pub fn ext(&self) -> &ash::extensions::ext::DebugUtils {
+        &self.debug_utils_ext
+    }
+
+    pub unsafe fn destroy(&self) {
+        if self.is_enabled {
+            self.debug_utils_ext
+                .destroy_debug_utils_messenger(self.debug_utils_messenger, None);
+            log::debug!("dropped debug utils messenger");
+        }
+    }
+}
+
+pub fn check_supported(entry: &ash::Entry) -> Result<()> {
     let layer_properties = entry.enumerate_instance_layer_properties()?;
 
     if layer_properties.is_empty() {
         return Err(Error::msg("no available layers found"));
     }
 
-    for required_layer_name in validation_info.required_validation_layers.iter() {
+    for required_layer_name in required_layers().iter() {
         let mut is_layer_found = false;
 
         for layer_property in layer_properties.iter() {
-            let test_layer_name = utils::from_vk_string(&layer_property.layer_name);
-            if *required_layer_name == test_layer_name {
+            let layer_name = unsafe { CStr::from_ptr(layer_property.layer_name.as_ptr()) };
+
+            if required_layer_name.as_c_str() == layer_name {
                 is_layer_found = true;
                 break;
             }
         }
 
-        if is_layer_found == false {
+        if !is_layer_found {
             return Err(Error::msg(format!(
-                "required layer `{}` was not found",
+                "required layer {:?} was not found",
                 required_layer_name
             )));
         }
@@ -44,7 +83,7 @@ pub fn check_validation_error_support(entry: &ash::Entry, validation_info: &Vali
     Ok(())
 }
 
-pub fn create_debug_messenger_create_info() -> vk::DebugUtilsMessengerCreateInfoEXT {
+pub fn debug_messenger_create_info() -> vk::DebugUtilsMessengerCreateInfoEXT {
     vk::DebugUtilsMessengerCreateInfoEXT::builder()
         .message_severity(
             vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
@@ -61,23 +100,8 @@ pub fn create_debug_messenger_create_info() -> vk::DebugUtilsMessengerCreateInfo
         .build()
 }
 
-pub fn setup_debug_utils(
-    entry: &ash::Entry,
-    instance: &ash::Instance,
-    debug_utils_messenger_create_info: &vk::DebugUtilsMessengerCreateInfoEXT,
-    validation_info: &ValidationInfo,
-) -> Result<(ash::extensions::ext::DebugUtils, vk::DebugUtilsMessengerEXT)> {
-    let debug_utils_loader = ash::extensions::ext::DebugUtils::new(entry, instance);
-
-    if validation_info.is_enabled {
-        let messenger =
-            unsafe { debug_utils_loader.create_debug_utils_messenger(debug_utils_messenger_create_info, None)? };
-        log::debug!("created debug utils messenger: {:?}", messenger);
-
-        Ok((debug_utils_loader, messenger))
-    } else {
-        Ok((debug_utils_loader, vk::DebugUtilsMessengerEXT::null()))
-    }
+pub fn required_layers() -> &'static [CString] {
+    REQUIRED_LAYERS.get_or_init(|| vec![CString::new("VK_LAYER_KHRONOS_validation").unwrap()])
 }
 
 unsafe extern "system" fn vulkan_debug_utils_callback(
@@ -104,3 +128,5 @@ unsafe extern "system" fn vulkan_debug_utils_callback(
 
     vk::FALSE
 }
+
+static REQUIRED_LAYERS: sync::OnceCell<Vec<CString>> = sync::OnceCell::new();
