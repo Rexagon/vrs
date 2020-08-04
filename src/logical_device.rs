@@ -3,6 +3,7 @@ use ash::version::{DeviceV1_0, InstanceV1_0};
 use ash::vk;
 
 use crate::surface::Surface;
+use crate::swapchain::SwapchainSupportInfo;
 use crate::utils;
 use crate::validation;
 
@@ -62,6 +63,46 @@ impl QueueFamilyIndices {
     }
 }
 
+fn create_logical_device(
+    instance: &ash::Instance,
+    physical_device: vk::PhysicalDevice,
+    queue_indices: QueueFamilyIndices,
+    is_validation_enabled: bool,
+) -> Result<(ash::Device, vk::Queue)> {
+    let queue_priorities = [1.0f32];
+    let mut queue_create_infos = Vec::new();
+    queue_create_infos.push(
+        vk::DeviceQueueCreateInfo::builder()
+            .queue_family_index(queue_indices.graphics_family.unwrap() as u32)
+            .queue_priorities(&queue_priorities)
+            .build(),
+    );
+
+    //
+    let required_extensions = vec![ash::extensions::khr::Swapchain::name().as_ptr()];
+
+    //
+    let required_layers = if is_validation_enabled {
+        validation::required_layers()
+    } else {
+        &[]
+    };
+
+    let required_layers = utils::as_ptr_vec(&required_layers);
+
+    //
+    let device_create_info = vk::DeviceCreateInfo::builder()
+        .queue_create_infos(&queue_create_infos)
+        .enabled_extension_names(&required_extensions)
+        .enabled_layer_names(&required_layers);
+
+    //
+    let device = unsafe { instance.create_device(physical_device, &device_create_info, None)? };
+    let graphics_queue = unsafe { device.get_device_queue(queue_indices.graphics_family.unwrap() as u32, 0) };
+
+    Ok((device, graphics_queue))
+}
+
 fn pick_physical_device(
     instance: &ash::Instance,
     surface: &Surface,
@@ -81,45 +122,6 @@ fn pick_physical_device(
         Some(result) => Ok(result),
         None => Err(Error::msg("no suitable physical device found")),
     }
-}
-
-fn create_logical_device(
-    instance: &ash::Instance,
-    physical_device: vk::PhysicalDevice,
-    queue_indices: QueueFamilyIndices,
-    is_validation_enabled: bool,
-) -> Result<(ash::Device, vk::Queue)> {
-    let queue_priorities = [1.0f32];
-    let mut queue_create_infos = Vec::new();
-    queue_create_infos.push(
-        vk::DeviceQueueCreateInfo::builder()
-            .queue_family_index(queue_indices.graphics_family.unwrap() as u32)
-            .queue_priorities(&queue_priorities)
-            .build(),
-    );
-
-    //
-    let required_layers = if is_validation_enabled {
-        validation::required_layers()
-    } else {
-        &[]
-    };
-
-    let required_layers: Vec<*const i8> = required_layers
-        .into_iter()
-        .map(|item| item.as_ptr())
-        .collect::<Vec<_>>();
-
-    //
-    let device_create_info = vk::DeviceCreateInfo::builder()
-        .queue_create_infos(&queue_create_infos)
-        .enabled_layer_names(&required_layers);
-
-    //
-    let device = unsafe { instance.create_device(physical_device, &device_create_info, None)? };
-    let graphics_queue = unsafe { device.get_device_queue(queue_indices.graphics_family.unwrap() as u32, 0) };
-
-    Ok((device, graphics_queue))
 }
 
 fn check_physical_device(
@@ -199,4 +201,19 @@ fn check_physical_device(
     }
 
     Ok(queue_family_indices)
+}
+
+fn query_swapchain_support(surface: &Surface, physical_device: vk::PhysicalDevice) -> Result<SwapchainSupportInfo> {
+    let ext = surface.ext();
+    let surface = surface.handle();
+
+    let capabilities = unsafe { ext.get_physical_device_surface_capabilities(physical_device, surface)? };
+    let available_formats = unsafe { ext.get_physical_device_surface_formats(physical_device, surface)? };
+    let available_present_modes = unsafe { ext.get_physical_device_surface_present_modes(physical_device, surface)? };
+
+    Ok(SwapchainSupportInfo {
+        capabilities,
+        available_formats,
+        available_present_modes,
+    })
 }

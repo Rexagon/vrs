@@ -1,4 +1,4 @@
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 
 use anyhow::Result;
@@ -21,4 +21,9 @@ pub fn checked_from_vk_string(raw_string_array: &[c_char]) -> Result<String> {
     };
 
     Ok(raw_string.to_str()?.to_owned())
+}
+
+#[allow(unused)]
+pub fn as_ptr_vec(names: &[CString]) -> Vec<*const c_char> {
+    names.iter().map(|item| item.as_ptr()).collect()
 }

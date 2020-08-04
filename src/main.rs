@@ -3,6 +3,7 @@
 mod instance;
 mod logical_device;
 mod surface;
+mod swapchain;
 mod utils;
 mod validation;
 
