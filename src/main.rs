@@ -52,7 +52,7 @@ impl App {
         let swapchain = Swapchain::new(instance.get(), &surface, &logical_device)?;
 
         let simple_render_pass = SimpleRenderPass::new(&logical_device, swapchain.format())?;
-        let pipeline = DefaultPipeline::new(&logical_device, swapchain.extent())?;
+        let pipeline = DefaultPipeline::new(&logical_device, swapchain.extent(), &simple_render_pass)?;
 
         Ok((
             event_loop,
@@ -103,6 +103,7 @@ impl Drop for App {
     fn drop(&mut self) {
         unsafe {
             self.pipeline.destroy(&self.logical_device);
+            self.simple_render_pass.destroy(&self.logical_device);
             self.swapchain.destroy(&self.logical_device);
             self.logical_device.destroy();
             self.surface.destroy();

@@ -7,39 +7,39 @@ use crate::shader::{self, ShaderModule};
 use crate::utils;
 
 pub struct DefaultPipeline {
+    graphics_pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
     vertex_shader_module: ShaderModule,
     fragment_shader_module: ShaderModule,
 }
 
 impl DefaultPipeline {
-    pub fn new(logical_device: &LogicalDevice, extent: vk::Extent2D) -> Result<Self> {
+    pub fn new(logical_device: &LogicalDevice, extent: vk::Extent2D, render_pass: &SimpleRenderPass) -> Result<Self> {
         let vertex_shader_module = ShaderModule::from_file(logical_device, "shaders/spv/mesh.vert.spv")?;
         let fragment_shader_module = ShaderModule::from_file(logical_device, "shaders/spv/mesh.frag.spv")?;
 
         let main_function_name = shader::main_function_name();
 
         // shader stages
-        let mut shader_stages = Vec::new();
-        shader_stages.push(
+        let shader_stages = vec![
             vk::PipelineShaderStageCreateInfo::builder()
                 .module(vertex_shader_module.handle())
                 .name(main_function_name)
-                .stage(vk::ShaderStageFlags::VERTEX),
-        );
-        shader_stages.push(
+                .stage(vk::ShaderStageFlags::VERTEX)
+                .build(),
             vk::PipelineShaderStageCreateInfo::builder()
                 .module(fragment_shader_module.handle())
                 .name(main_function_name)
-                .stage(vk::ShaderStageFlags::FRAGMENT),
-        );
+                .stage(vk::ShaderStageFlags::FRAGMENT)
+                .build(),
+        ];
 
         // vertex input state
         let vertex_input_state_create_info = vk::PipelineVertexInputStateCreateInfo::builder()
             .vertex_attribute_descriptions(&[])
             .vertex_binding_descriptions(&[]);
 
-        let vertex_input_assembly_state_info = vk::PipelineInputAssemblyStateCreateInfo::builder()
+        let input_assembly_state_create_info = vk::PipelineInputAssemblyStateCreateInfo::builder()
             .primitive_restart_enable(false)
             .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
 
@@ -81,7 +81,7 @@ impl DefaultPipeline {
             .reference(0)
             .build();
 
-        let depth_state_create_info = vk::PipelineDepthStencilStateCreateInfo::builder()
+        let depth_stencil_state_create_info = vk::PipelineDepthStencilStateCreateInfo::builder()
             .depth_test_enable(false)
             .depth_write_enable(false)
             .depth_compare_op(vk::CompareOp::LESS_OR_EQUAL)
@@ -107,6 +107,7 @@ impl DefaultPipeline {
             .logic_op(vk::LogicOp::COPY)
             .attachments(&color_blend_attachment_states);
 
+        // layout creation info
         let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::builder();
 
         let pipeline_layout = unsafe {
@@ -116,7 +117,34 @@ impl DefaultPipeline {
         };
         log::debug!("created pipeline layout {:?}", pipeline_layout);
 
+        // pipeline creation
+        let graphics_pipeline_create_infos = [vk::GraphicsPipelineCreateInfo::builder()
+            .stages(&shader_stages)
+            .vertex_input_state(&vertex_input_state_create_info)
+            .input_assembly_state(&input_assembly_state_create_info)
+            .viewport_state(&viewport_state_create_info)
+            .rasterization_state(&rasterization_state_create_info)
+            .multisample_state(&multisample_state_create_info)
+            .depth_stencil_state(&depth_stencil_state_create_info)
+            .color_blend_state(&color_blend_state)
+            .layout(pipeline_layout)
+            .render_pass(render_pass.handle())
+            .subpass(0)
+            .base_pipeline_handle(vk::Pipeline::null())
+            .base_pipeline_index(-1)
+            .build()];
+
+        let graphics_pipelines = unsafe {
+            logical_device
+                .device()
+                .create_graphics_pipelines(vk::PipelineCache::null(), &graphics_pipeline_create_infos, None)
+                .map_err(|(_, e)| e)?
+        };
+        let graphics_pipeline = graphics_pipelines[0];
+        log::debug!("create graphics pipeline {:?}", graphics_pipeline);
+
         Ok(Self {
+            graphics_pipeline,
             pipeline_layout,
             vertex_shader_module,
             fragment_shader_module,
@@ -124,6 +152,9 @@ impl DefaultPipeline {
     }
 
     pub unsafe fn destroy(&self, logical_device: &LogicalDevice) {
+        logical_device.device().destroy_pipeline(self.graphics_pipeline, None);
+        log::debug!("dropped graphics pipeline {:?}", self.graphics_pipeline);
+
         logical_device
             .device()
             .destroy_pipeline_layout(self.pipeline_layout, None);
@@ -140,17 +171,7 @@ pub struct SimpleRenderPass {
 
 impl SimpleRenderPass {
     pub fn new(logical_device: &LogicalDevice, surface_format: vk::Format) -> Result<Self> {
-        let color_attachment = vk::AttachmentDescription::builder()
-            .format(surface_format)
-            .samples(vk::SampleCountFlags::TYPE_1)
-            .load_op(vk::AttachmentLoadOp::CLEAR)
-            .store_op(vk::AttachmentStoreOp::STORE)
-            .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
-            .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
-            .initial_layout(vk::ImageLayout::UNDEFINED)
-            .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-            .build();
-
+        // subpasses
         let color_attachment_ref = [vk::AttachmentReference::builder()
             .attachment(0)
             .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
@@ -161,11 +182,21 @@ impl SimpleRenderPass {
             .color_attachments(&color_attachment_ref)
             .build()];
 
-        let render_pass_attachments = [color_attachment];
+        // render pass
+        let render_pass_attachments = [vk::AttachmentDescription::builder()
+            .format(surface_format)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::STORE)
+            .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+            .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+            .build()];
 
         let render_pass_create_info = vk::RenderPassCreateInfo::builder()
-            .attachments(&render_pass_attachments)
-            .subpasses(&subpasses);
+            .subpasses(&subpasses)
+            .attachments(&render_pass_attachments);
 
         let render_pass = unsafe {
             logical_device
@@ -175,6 +206,11 @@ impl SimpleRenderPass {
         log::debug!("created render pass {:?}", render_pass);
 
         Ok(Self { render_pass })
+    }
+
+    #[inline]
+    pub fn handle(&self) -> vk::RenderPass {
+        self.render_pass
     }
 
     pub unsafe fn destroy(&self, logical_device: &LogicalDevice) {
