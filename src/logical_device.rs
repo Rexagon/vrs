@@ -1,29 +1,31 @@
+use std::collections::HashSet;
+
 use anyhow::{Error, Result};
 use ash::version::{DeviceV1_0, InstanceV1_0};
 use ash::vk;
 
 use crate::surface::Surface;
-use crate::swapchain::SwapchainSupportInfo;
 use crate::utils;
 use crate::validation;
 
 pub struct LogicalDevice {
     device: ash::Device,
     physical_device: vk::PhysicalDevice,
-    graphics_queue: vk::Queue,
+    queues: Queues,
+    swapchain_support: SwapchainSupportInfo,
 }
 
 impl LogicalDevice {
     pub fn new(instance: &ash::Instance, surface: &Surface, is_validation_enabled: bool) -> Result<Self> {
-        let (physical_device, queue_indices) = pick_physical_device(instance, surface)?;
-        let (device, graphics_queue) =
-            create_logical_device(instance, physical_device, queue_indices, is_validation_enabled)?;
+        let (physical_device, swapchain_support, queue_indices) = pick_physical_device(instance, surface)?;
+        let (device, queues) = create_logical_device(instance, physical_device, queue_indices, is_validation_enabled)?;
         log::debug!("created logical device");
 
         Ok(Self {
             device,
             physical_device,
-            graphics_queue,
+            queues,
+            swapchain_support,
         })
     }
 
@@ -41,14 +43,27 @@ impl LogicalDevice {
 
     #[allow(unused)]
     #[inline]
-    pub fn graphics_queue(&self) -> vk::Queue {
-        self.graphics_queue
+    pub fn queues(&self) -> &Queues {
+        &self.queues
+    }
+
+    #[allow(unused)]
+    #[inline]
+    pub fn swapchain_support(&self) -> &SwapchainSupportInfo {
+        &self.swapchain_support
     }
 
     pub unsafe fn destroy(&self) {
         self.device.destroy_device(None);
         log::debug!("dropped logical device");
     }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SwapchainSupportInfo {
+    pub capabilities: vk::SurfaceCapabilitiesKHR,
+    pub available_formats: Vec<vk::SurfaceFormatKHR>,
+    pub available_present_modes: Vec<vk::PresentModeKHR>,
 }
 
 #[derive(Debug, Copy, Clone, Default)]
@@ -61,6 +76,44 @@ impl QueueFamilyIndices {
     fn is_complete(&self) -> bool {
         self.graphics_family.is_some() && self.present_family.is_some()
     }
+
+    fn unique_families(&self) -> HashSet<u32> {
+        let mut result = HashSet::new();
+        self.graphics_family.map(|idx| result.insert(idx));
+        self.present_family.map(|idx| result.insert(idx));
+        result
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct Queues {
+    pub graphics_queue: vk::Queue,
+    pub graphics_queue_family: u32,
+    pub present_queue: vk::Queue,
+    pub present_queue_family: u32,
+}
+
+impl Queues {
+    fn new(device: &ash::Device, indices: QueueFamilyIndices) -> Result<Self> {
+        let graphics_queue_family = indices
+            .graphics_family
+            .ok_or_else(|| Error::msg("graphics family is not specified"))?;
+
+        let graphics_queue = unsafe { device.get_device_queue(graphics_queue_family, 0) };
+
+        let present_queue_family = indices
+            .present_family
+            .ok_or_else(|| Error::msg("present family is not specified"))?;
+
+        let present_queue = unsafe { device.get_device_queue(present_queue_family, 0) };
+
+        Ok(Self {
+            graphics_queue_family,
+            graphics_queue,
+            present_queue_family,
+            present_queue,
+        })
+    }
 }
 
 fn create_logical_device(
@@ -68,18 +121,26 @@ fn create_logical_device(
     physical_device: vk::PhysicalDevice,
     queue_indices: QueueFamilyIndices,
     is_validation_enabled: bool,
-) -> Result<(ash::Device, vk::Queue)> {
-    let queue_priorities = [1.0f32];
+) -> Result<(ash::Device, Queues)> {
+    let unique_queue_families = queue_indices.unique_families();
+
     let mut queue_create_infos = Vec::new();
-    queue_create_infos.push(
-        vk::DeviceQueueCreateInfo::builder()
-            .queue_family_index(queue_indices.graphics_family.unwrap() as u32)
-            .queue_priorities(&queue_priorities)
-            .build(),
-    );
+
+    let queue_priorities = [1.0f32];
+    for family in unique_queue_families.into_iter() {
+        queue_create_infos.push(
+            vk::DeviceQueueCreateInfo::builder()
+                .queue_family_index(family)
+                .queue_priorities(&queue_priorities)
+                .build(),
+        );
+    }
 
     //
-    let required_extensions = vec![ash::extensions::khr::Swapchain::name().as_ptr()];
+    let required_extensions = vec![
+        ash::extensions::khr::Swapchain::name().as_ptr(),
+        ash::extensions::nv::RayTracing::name().as_ptr(),
+    ];
 
     //
     let required_layers = if is_validation_enabled {
@@ -98,28 +159,28 @@ fn create_logical_device(
 
     //
     let device = unsafe { instance.create_device(physical_device, &device_create_info, None)? };
-    let graphics_queue = unsafe { device.get_device_queue(queue_indices.graphics_family.unwrap() as u32, 0) };
+    let queues = Queues::new(&device, queue_indices)?;
 
-    Ok((device, graphics_queue))
+    Ok((device, queues))
 }
 
 fn pick_physical_device(
     instance: &ash::Instance,
     surface: &Surface,
-) -> Result<(vk::PhysicalDevice, QueueFamilyIndices)> {
+) -> Result<(vk::PhysicalDevice, SwapchainSupportInfo, QueueFamilyIndices)> {
     let physical_devices = unsafe { instance.enumerate_physical_devices()? };
 
     let mut result = None;
     for &physical_device in physical_devices.iter() {
-        let queue_indices = check_physical_device(instance, surface, physical_device)?;
+        let info = check_physical_device(instance, surface, physical_device)?;
 
-        if queue_indices.is_complete() && result.is_none() {
-            result = Some((physical_device, queue_indices));
+        if info.1.is_complete() && result.is_none() {
+            result = Some((physical_device, info));
         }
     }
 
     match result {
-        Some(result) => Ok(result),
+        Some((device, (swapchain_support, indices))) => Ok((device, swapchain_support, indices)),
         None => Err(Error::msg("no suitable physical device found")),
     }
 }
@@ -128,17 +189,9 @@ fn check_physical_device(
     instance: &ash::Instance,
     surface: &Surface,
     physical_device: vk::PhysicalDevice,
-) -> Result<QueueFamilyIndices> {
-    let mut queue_family_indices = QueueFamilyIndices {
-        graphics_family: None,
-        present_family: None,
-    };
-
+) -> Result<(SwapchainSupportInfo, QueueFamilyIndices)> {
+    // check device properties
     let device_properties = unsafe { instance.get_physical_device_properties(physical_device) };
-    //let device_features = unsafe { instance.get_physical_device_features(physical_device) };
-    let device_queue_families = unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
-
-    let device_rt_properties = unsafe { ash::extensions::nv::RayTracing::get_properties(instance, physical_device) };
 
     let device_name = utils::from_vk_string(&device_properties.device_name);
 
@@ -169,12 +222,38 @@ fn check_physical_device(
         patch_version
     );
 
-    if device_rt_properties.max_geometry_count == 0 {
-        log::warn!("ray tracing is not supported by {}", device_name);
-        return Ok(queue_family_indices);
+    // check device extension support
+    let device_extensions = unsafe { instance.enumerate_device_extension_properties(physical_device)? };
+
+    let mut required_extensions = HashSet::new();
+    required_extensions.insert(ash::extensions::khr::Swapchain::name());
+    required_extensions.insert(ash::extensions::nv::RayTracing::name());
+
+    for item in device_extensions {
+        let extension_name = utils::from_vk_string_raw(&item.extension_name);
+        required_extensions.remove(extension_name);
     }
 
-    log::debug!("{:#?}", device_rt_properties);
+    if !required_extensions.is_empty() {
+        for item in required_extensions.into_iter() {
+            log::debug!("extension {:?} is not supported by device", item);
+        }
+        return Ok(Default::default());
+    }
+
+    // check swapchain support
+    let swapchain_support = query_swapchain_support(surface, physical_device)?;
+    if swapchain_support.available_formats.is_empty() || swapchain_support.available_present_modes.is_empty() {
+        return Ok(Default::default());
+    }
+
+    // find supported families
+    let mut queue_family_indices = QueueFamilyIndices {
+        graphics_family: None,
+        present_family: None,
+    };
+
+    let device_queue_families = unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
 
     for (index, queue_family) in device_queue_families.iter().enumerate() {
         if queue_family.queue_count == 0 {
@@ -200,7 +279,8 @@ fn check_physical_device(
         }
     }
 
-    Ok(queue_family_indices)
+    // done
+    Ok((swapchain_support, queue_family_indices))
 }
 
 fn query_swapchain_support(surface: &Surface, physical_device: vk::PhysicalDevice) -> Result<SwapchainSupportInfo> {

@@ -18,6 +18,7 @@ use winit::window::Window;
 use crate::instance::Instance;
 use crate::logical_device::LogicalDevice;
 use crate::surface::Surface;
+use crate::swapchain::Swapchain;
 use crate::validation::Validation;
 
 const IS_VALIDATION_ENABLED: bool = true;
@@ -27,6 +28,7 @@ struct App {
     surface: Surface,
     validation: Validation,
     instance: Instance,
+    swapchain: Swapchain,
 
     _entry: ash::Entry,
 }
@@ -41,8 +43,8 @@ impl App {
         let instance = Instance::new(&entry, &window, IS_VALIDATION_ENABLED)?;
         let validation = Validation::new(&entry, instance.get(), IS_VALIDATION_ENABLED)?;
         let surface = Surface::new(&entry, instance.get(), &window)?;
-
         let logical_device = LogicalDevice::new(instance.get(), &surface, IS_VALIDATION_ENABLED)?;
+        let swapchain = Swapchain::new(instance.get(), &surface, &logical_device)?;
 
         Ok((
             event_loop,
@@ -52,6 +54,7 @@ impl App {
                 validation,
                 surface,
                 instance,
+                swapchain,
                 _entry: entry,
             },
         ))
@@ -89,6 +92,7 @@ impl App {
 impl Drop for App {
     fn drop(&mut self) {
         unsafe {
+            self.swapchain.destroy();
             self.logical_device.destroy();
             self.surface.destroy();
             self.validation.destroy();
