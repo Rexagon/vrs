@@ -2,6 +2,7 @@
 
 mod instance;
 mod logical_device;
+mod shader;
 mod surface;
 mod swapchain;
 mod utils;
@@ -45,6 +46,8 @@ impl App {
         let surface = Surface::new(&entry, instance.get(), &window)?;
         let logical_device = LogicalDevice::new(instance.get(), &surface, IS_VALIDATION_ENABLED)?;
         let swapchain = Swapchain::new(instance.get(), &surface, &logical_device)?;
+
+        shader::create_graphics_pipeline(&logical_device)?;
 
         Ok((
             event_loop,
