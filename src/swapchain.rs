@@ -34,6 +34,11 @@ impl Swapchain {
         })
     }
 
+    #[inline]
+    pub fn extent(&self) -> vk::Extent2D {
+        self.extent
+    }
+
     pub unsafe fn destroy(&self, logical_device: &LogicalDevice) {
         destroy_image_views(logical_device.device(), &self.image_views);
 

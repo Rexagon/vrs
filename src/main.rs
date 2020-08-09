@@ -2,6 +2,7 @@
 
 mod instance;
 mod logical_device;
+mod pipeline;
 mod shader;
 mod surface;
 mod swapchain;
@@ -18,6 +19,7 @@ use winit::window::Window;
 
 use crate::instance::Instance;
 use crate::logical_device::LogicalDevice;
+use crate::pipeline::DefaultPipeline;
 use crate::surface::Surface;
 use crate::swapchain::Swapchain;
 use crate::validation::Validation;
@@ -30,6 +32,7 @@ struct App {
     validation: Validation,
     instance: Instance,
     swapchain: Swapchain,
+    pipeline: DefaultPipeline,
 
     _entry: ash::Entry,
 }
@@ -46,8 +49,7 @@ impl App {
         let surface = Surface::new(&entry, instance.get(), &window)?;
         let logical_device = LogicalDevice::new(instance.get(), &surface, IS_VALIDATION_ENABLED)?;
         let swapchain = Swapchain::new(instance.get(), &surface, &logical_device)?;
-
-        shader::create_graphics_pipeline(&logical_device)?;
+        let pipeline = DefaultPipeline::new(&logical_device, swapchain.extent())?;
 
         Ok((
             event_loop,
@@ -58,6 +60,7 @@ impl App {
                 surface,
                 instance,
                 swapchain,
+                pipeline,
                 _entry: entry,
             },
         ))
@@ -95,6 +98,7 @@ impl App {
 impl Drop for App {
     fn drop(&mut self) {
         unsafe {
+            self.pipeline.destroy(&self.logical_device);
             self.swapchain.destroy(&self.logical_device);
             self.logical_device.destroy();
             self.surface.destroy();

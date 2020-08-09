@@ -8,34 +8,6 @@ use once_cell::*;
 use crate::logical_device::LogicalDevice;
 use crate::utils;
 
-pub fn create_graphics_pipeline(logical_device: &LogicalDevice) -> Result<()> {
-    let vertex_shader_module = ShaderModule::from_file(logical_device, "shaders/spv/mesh.vert.spv")?;
-    let fragment_shader_module = ShaderModule::from_file(logical_device, "shaders/spv/mesh.frag.spv")?;
-
-    let main_function_name = main_function_name();
-
-    let mut shader_stages = Vec::new();
-    shader_stages.push(
-        vk::PipelineShaderStageCreateInfo::builder()
-            .module(vertex_shader_module.handle())
-            .name(main_function_name)
-            .stage(vk::ShaderStageFlags::VERTEX),
-    );
-    shader_stages.push(
-        vk::PipelineShaderStageCreateInfo::builder()
-            .module(fragment_shader_module.handle())
-            .name(main_function_name)
-            .stage(vk::ShaderStageFlags::FRAGMENT),
-    );
-
-    unsafe {
-        vertex_shader_module.destroy(logical_device);
-        fragment_shader_module.destroy(logical_device);
-    }
-
-    Ok(())
-}
-
 pub struct ShaderModule {
     shader_module: vk::ShaderModule,
 }
