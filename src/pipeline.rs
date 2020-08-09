@@ -133,3 +133,52 @@ impl DefaultPipeline {
         self.fragment_shader_module.destroy(logical_device);
     }
 }
+
+pub struct SimpleRenderPass {
+    render_pass: vk::RenderPass,
+}
+
+impl SimpleRenderPass {
+    pub fn new(logical_device: &LogicalDevice, surface_format: vk::Format) -> Result<Self> {
+        let color_attachment = vk::AttachmentDescription::builder()
+            .format(surface_format)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::STORE)
+            .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+            .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+            .build();
+
+        let color_attachment_ref = [vk::AttachmentReference::builder()
+            .attachment(0)
+            .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .build()];
+
+        let subpasses = [vk::SubpassDescription::builder()
+            .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+            .color_attachments(&color_attachment_ref)
+            .build()];
+
+        let render_pass_attachments = [color_attachment];
+
+        let render_pass_create_info = vk::RenderPassCreateInfo::builder()
+            .attachments(&render_pass_attachments)
+            .subpasses(&subpasses);
+
+        let render_pass = unsafe {
+            logical_device
+                .device()
+                .create_render_pass(&render_pass_create_info, None)?
+        };
+        log::debug!("created render pass {:?}", render_pass);
+
+        Ok(Self { render_pass })
+    }
+
+    pub unsafe fn destroy(&self, logical_device: &LogicalDevice) {
+        logical_device.device().destroy_render_pass(self.render_pass, None);
+        log::debug!("dropped render pass {:?}", self.render_pass);
+    }
+}

@@ -35,6 +35,11 @@ impl Swapchain {
     }
 
     #[inline]
+    pub fn format(&self) -> vk::Format {
+        self.format
+    }
+
+    #[inline]
     pub fn extent(&self) -> vk::Extent2D {
         self.extent
     }

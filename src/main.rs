@@ -19,7 +19,7 @@ use winit::window::Window;
 
 use crate::instance::Instance;
 use crate::logical_device::LogicalDevice;
-use crate::pipeline::DefaultPipeline;
+use crate::pipeline::{DefaultPipeline, SimpleRenderPass};
 use crate::surface::Surface;
 use crate::swapchain::Swapchain;
 use crate::validation::Validation;
@@ -32,6 +32,7 @@ struct App {
     validation: Validation,
     instance: Instance,
     swapchain: Swapchain,
+    simple_render_pass: SimpleRenderPass,
     pipeline: DefaultPipeline,
 
     _entry: ash::Entry,
@@ -49,6 +50,8 @@ impl App {
         let surface = Surface::new(&entry, instance.get(), &window)?;
         let logical_device = LogicalDevice::new(instance.get(), &surface, IS_VALIDATION_ENABLED)?;
         let swapchain = Swapchain::new(instance.get(), &surface, &logical_device)?;
+
+        let simple_render_pass = SimpleRenderPass::new(&logical_device, swapchain.format())?;
         let pipeline = DefaultPipeline::new(&logical_device, swapchain.extent())?;
 
         Ok((
@@ -60,6 +63,7 @@ impl App {
                 surface,
                 instance,
                 swapchain,
+                simple_render_pass,
                 pipeline,
                 _entry: entry,
             },
