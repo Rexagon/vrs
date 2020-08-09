@@ -92,7 +92,7 @@ impl App {
 impl Drop for App {
     fn drop(&mut self) {
         unsafe {
-            self.swapchain.destroy();
+            self.swapchain.destroy(&self.logical_device);
             self.logical_device.destroy();
             self.surface.destroy();
             self.validation.destroy();

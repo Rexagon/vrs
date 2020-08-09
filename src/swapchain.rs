@@ -9,6 +9,7 @@ pub struct Swapchain {
     swapchain_ext: ash::extensions::khr::Swapchain,
     swapchain: vk::SwapchainKHR,
     images: Vec<vk::Image>,
+    image_views: Vec<vk::ImageView>,
     format: vk::Format,
     extent: vk::Extent2D,
 }
@@ -21,16 +22,21 @@ impl Swapchain {
 
         let images = unsafe { swapchain_ext.get_swapchain_images(swapchain)? };
 
+        let image_views = create_image_views(logical_device.device(), format, &images)?;
+
         Ok(Self {
             swapchain_ext,
             swapchain,
             images,
+            image_views,
             format,
             extent,
         })
     }
 
-    pub unsafe fn destroy(&self) {
+    pub unsafe fn destroy(&self, logical_device: &LogicalDevice) {
+        destroy_image_views(logical_device.device(), &self.image_views);
+
         self.swapchain_ext.destroy_swapchain(self.swapchain, None);
         log::debug!("dropped swapchain");
     }
@@ -130,5 +136,51 @@ fn choose_swapchain_extent(capabilities: &vk::SurfaceCapabilitiesKHR, size: [u32
                 capabilities.max_image_extent.height,
             ),
         }
+    }
+}
+
+pub fn create_image_views(
+    device: &ash::Device,
+    surface_format: vk::Format,
+    images: &[vk::Image],
+) -> Result<Vec<vk::ImageView>> {
+    let mut result = Vec::with_capacity(images.len());
+
+    for &image in images.iter() {
+        let image_view_create_info = vk::ImageViewCreateInfo::builder()
+            .view_type(vk::ImageViewType::TYPE_2D)
+            .format(surface_format)
+            .components(
+                vk::ComponentMapping::builder()
+                    .r(vk::ComponentSwizzle::IDENTITY)
+                    .g(vk::ComponentSwizzle::IDENTITY)
+                    .b(vk::ComponentSwizzle::IDENTITY)
+                    .a(vk::ComponentSwizzle::IDENTITY)
+                    .build(),
+            )
+            .subresource_range(
+                vk::ImageSubresourceRange::builder()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .base_mip_level(0)
+                    .level_count(1)
+                    .base_array_layer(0)
+                    .layer_count(1)
+                    .build(),
+            )
+            .image(image);
+
+        let image_view = unsafe { device.create_image_view(&image_view_create_info, None)? };
+        log::debug!("created image view {:?}", image_view);
+
+        result.push(image_view);
+    }
+
+    Ok(result)
+}
+
+pub unsafe fn destroy_image_views(device: &ash::Device, image_views: &[vk::ImageView]) {
+    for &image_view in image_views.iter() {
+        device.destroy_image_view(image_view, None);
+        log::debug!("dropped image view {:?}", image_view);
     }
 }
