@@ -28,7 +28,7 @@ impl Framebuffer {
     }
 
     pub unsafe fn destroy(&self, logical_device: &LogicalDevice) {
-        logical_device.device().destroy_framebuffer(self.framebuffer, None);
+        logical_device.handle().destroy_framebuffer(self.framebuffer, None);
         log::debug!("dropped framebuffer {:?}", self.framebuffer);
     }
 }
@@ -50,7 +50,7 @@ fn create_framebuffer(
 
     let framebuffer = unsafe {
         logical_device
-            .device()
+            .handle()
             .create_framebuffer(&framebuffer_create_info, None)?
     };
 

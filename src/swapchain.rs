@@ -22,7 +22,7 @@ impl Swapchain {
 
         let images = unsafe { swapchain_ext.get_swapchain_images(swapchain)? };
 
-        let image_views = create_image_views(logical_device.device(), format, &images)?;
+        let image_views = create_image_views(logical_device.handle(), format, &images)?;
 
         Ok(Self {
             swapchain_ext,
@@ -32,6 +32,11 @@ impl Swapchain {
             format,
             extent,
         })
+    }
+
+    #[inline]
+    pub fn handle(&self) -> vk::SwapchainKHR {
+        self.swapchain
     }
 
     #[inline]
@@ -49,8 +54,39 @@ impl Swapchain {
         self.extent
     }
 
+    pub fn acquire_next_image(&self, semaphore: vk::Semaphore) -> Result<(u32, bool)> {
+        let (image_index, is_sub_optimal) = unsafe {
+            self.swapchain_ext
+                .acquire_next_image(self.swapchain, std::u64::MAX, semaphore, vk::Fence::null())?
+        };
+
+        Ok((image_index, is_sub_optimal))
+    }
+
+    pub fn present_image(
+        &self,
+        logical_device: &LogicalDevice,
+        signal_semaphores: &[vk::Semaphore],
+        image_index: u32,
+    ) -> Result<()> {
+        let indices = [image_index];
+
+        let swapchains = [self.swapchain];
+        let present_info = vk::PresentInfoKHR::builder()
+            .wait_semaphores(&signal_semaphores)
+            .swapchains(&swapchains)
+            .image_indices(&indices);
+
+        unsafe {
+            self.swapchain_ext
+                .queue_present(logical_device.queues().graphics_queue, &present_info)?;
+        }
+
+        Ok(())
+    }
+
     pub unsafe fn destroy(&self, logical_device: &LogicalDevice) {
-        destroy_image_views(logical_device.device(), &self.image_views);
+        destroy_image_views(logical_device.handle(), &self.image_views);
 
         self.swapchain_ext.destroy_swapchain(self.swapchain, None);
         log::debug!("dropped swapchain");
@@ -107,7 +143,7 @@ fn create_swapchain(
         .clipped(true)
         .image_array_layers(1);
 
-    let swapchain_ext = ash::extensions::khr::Swapchain::new(instance, logical_device.device());
+    let swapchain_ext = ash::extensions::khr::Swapchain::new(instance, logical_device.handle());
     let swapchain = unsafe { swapchain_ext.create_swapchain(&swapchain_create_info, None)? };
 
     Ok((swapchain_ext, swapchain, surface_format.format, extent))

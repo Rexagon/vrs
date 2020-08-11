@@ -37,7 +37,7 @@ impl LogicalDevice {
 
     #[allow(unused)]
     #[inline]
-    pub fn device(&self) -> &ash::Device {
+    pub fn handle(&self) -> &ash::Device {
         &self.device
     }
 
@@ -51,6 +51,13 @@ impl LogicalDevice {
     #[inline]
     pub fn swapchain_support(&self) -> &SwapchainSupportInfo {
         &self.swapchain_support
+    }
+
+    pub fn wait_idle(&self) -> Result<()> {
+        unsafe {
+            self.device.device_wait_idle()?;
+        }
+        Ok(())
     }
 
     pub unsafe fn destroy(&self) {

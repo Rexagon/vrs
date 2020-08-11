@@ -111,7 +111,7 @@ impl DefaultPipeline {
 
         let pipeline_layout = unsafe {
             logical_device
-                .device()
+                .handle()
                 .create_pipeline_layout(&pipeline_layout_create_info, None)?
         };
         log::debug!("created pipeline layout {:?}", pipeline_layout);
@@ -135,7 +135,7 @@ impl DefaultPipeline {
 
         let graphics_pipelines = unsafe {
             logical_device
-                .device()
+                .handle()
                 .create_graphics_pipelines(vk::PipelineCache::null(), &graphics_pipeline_create_infos, None)
                 .map_err(|(_, e)| e)?
         };
@@ -150,12 +150,17 @@ impl DefaultPipeline {
         })
     }
 
+    #[inline]
+    pub fn handle(&self) -> vk::Pipeline {
+        self.graphics_pipeline
+    }
+
     pub unsafe fn destroy(&self, logical_device: &LogicalDevice) {
-        logical_device.device().destroy_pipeline(self.graphics_pipeline, None);
+        logical_device.handle().destroy_pipeline(self.graphics_pipeline, None);
         log::debug!("dropped graphics pipeline {:?}", self.graphics_pipeline);
 
         logical_device
-            .device()
+            .handle()
             .destroy_pipeline_layout(self.pipeline_layout, None);
         log::debug!("dropped pipeline layout {:?}", self.pipeline_layout);
 
@@ -199,7 +204,7 @@ impl SimpleRenderPass {
 
         let render_pass = unsafe {
             logical_device
-                .device()
+                .handle()
                 .create_render_pass(&render_pass_create_info, None)?
         };
         log::debug!("created render pass {:?}", render_pass);
@@ -213,7 +218,7 @@ impl SimpleRenderPass {
     }
 
     pub unsafe fn destroy(&self, logical_device: &LogicalDevice) {
-        logical_device.device().destroy_render_pass(self.render_pass, None);
+        logical_device.handle().destroy_render_pass(self.render_pass, None);
         log::debug!("dropped render pass {:?}", self.render_pass);
     }
 }

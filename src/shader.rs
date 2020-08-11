@@ -26,7 +26,7 @@ impl ShaderModule {
 
         let shader_module = unsafe {
             logical_device
-                .device()
+                .handle()
                 .create_shader_module(&shader_module_create_info, None)?
         };
         log::debug!("created shader module {:?}", shader_module);
@@ -40,7 +40,7 @@ impl ShaderModule {
     }
 
     pub unsafe fn destroy(&self, logical_device: &LogicalDevice) {
-        logical_device.device().destroy_shader_module(self.shader_module, None);
+        logical_device.handle().destroy_shader_module(self.shader_module, None);
         log::debug!("dropped shader module {:?}", self.shader_module);
     }
 }
