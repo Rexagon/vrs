@@ -1,5 +1,5 @@
-use anyhow::{Error, Result};
-use ash::version::{DeviceV1_0, InstanceV1_0};
+use anyhow::Result;
+use ash::version::DeviceV1_0;
 use ash::vk;
 
 use crate::logical_device::LogicalDevice;
@@ -37,6 +37,11 @@ impl Swapchain {
     #[inline]
     pub fn format(&self) -> vk::Format {
         self.format
+    }
+
+    #[inline]
+    pub fn image_views(&self) -> &[vk::ImageView] {
+        &self.image_views
     }
 
     #[inline]

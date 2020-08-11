@@ -1,10 +1,9 @@
-use anyhow::{Error, Result};
-use ash::version::{DeviceV1_0, InstanceV1_0};
+use anyhow::Result;
+use ash::version::DeviceV1_0;
 use ash::vk;
 
 use crate::logical_device::LogicalDevice;
 use crate::shader::{self, ShaderModule};
-use crate::utils;
 
 pub struct DefaultPipeline {
     graphics_pipeline: vk::Pipeline,

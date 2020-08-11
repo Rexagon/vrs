@@ -1,7 +1,7 @@
 use std::ffi::{CStr, CString};
 
-use anyhow::{Error, Result};
-use ash::version::{DeviceV1_0, InstanceV1_0};
+use anyhow::Result;
+use ash::version::DeviceV1_0;
 use ash::vk;
 use once_cell::*;
 

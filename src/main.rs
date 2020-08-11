@@ -1,5 +1,6 @@
 #![windows_subsystem = "windows"]
 
+mod framebuffer;
 mod instance;
 mod logical_device;
 mod pipeline;
@@ -17,6 +18,7 @@ use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 
+use crate::framebuffer::Framebuffer;
 use crate::instance::Instance;
 use crate::logical_device::LogicalDevice;
 use crate::pipeline::{DefaultPipeline, SimpleRenderPass};
@@ -34,6 +36,7 @@ struct App {
     swapchain: Swapchain,
     simple_render_pass: SimpleRenderPass,
     pipeline: DefaultPipeline,
+    framebuffers: Vec<Framebuffer>,
 
     _entry: ash::Entry,
 }
@@ -53,6 +56,18 @@ impl App {
 
         let simple_render_pass = SimpleRenderPass::new(&logical_device, swapchain.format())?;
         let pipeline = DefaultPipeline::new(&logical_device, swapchain.extent(), &simple_render_pass)?;
+        let framebuffers =
+            swapchain
+                .image_views()
+                .iter()
+                .try_fold(Vec::<Framebuffer>::new(), |mut framebuffers, &view| {
+                    Framebuffer::new(&logical_device, simple_render_pass.handle(), view, swapchain.extent()).map(
+                        |framebuffer| {
+                            framebuffers.push(framebuffer);
+                            framebuffers
+                        },
+                    )
+                })?;
 
         Ok((
             event_loop,
@@ -65,6 +80,7 @@ impl App {
                 swapchain,
                 simple_render_pass,
                 pipeline,
+                framebuffers,
                 _entry: entry,
             },
         ))
@@ -102,6 +118,10 @@ impl App {
 impl Drop for App {
     fn drop(&mut self) {
         unsafe {
+            self.framebuffers
+                .iter()
+                .for_each(|item| item.destroy(&self.logical_device));
+
             self.pipeline.destroy(&self.logical_device);
             self.simple_render_pass.destroy(&self.logical_device);
             self.swapchain.destroy(&self.logical_device);
