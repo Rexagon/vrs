@@ -5,6 +5,8 @@ use ash::version::EntryV1_0;
 use ash::vk;
 use once_cell::*;
 
+use crate::instance::Instance;
+
 pub struct Validation {
     is_enabled: bool,
     debug_utils_ext: ash::extensions::ext::DebugUtils,
@@ -12,8 +14,8 @@ pub struct Validation {
 }
 
 impl Validation {
-    pub fn new(entry: &ash::Entry, instance: &ash::Instance, is_enabled: bool) -> Result<Self> {
-        let debug_utils_ext = ash::extensions::ext::DebugUtils::new(entry, instance);
+    pub fn new(entry: &ash::Entry, instance: &Instance, is_enabled: bool) -> Result<Self> {
+        let debug_utils_ext = ash::extensions::ext::DebugUtils::new(entry, instance.handle());
 
         let debug_utils_messenger = if is_enabled {
             let debug_utils_messenger =

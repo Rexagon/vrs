@@ -31,7 +31,7 @@ where
         })
     }
 
-    pub fn draw(&mut self, logical_device: &LogicalDevice, swapchain: &Swapchain) -> Result<()> {
+    pub fn draw(&mut self, logical_device: &LogicalDevice, swapchain: &Swapchain) -> Result<bool> {
         let wait_semaphores = [self.frame_sync_objects.image_available_semaphore(self.current_frame)];
         let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
         let wait_fence = self.frame_sync_objects.inflight_fence(self.current_frame);
@@ -40,7 +40,11 @@ where
         self.frame_sync_objects
             .wait_for_fence(logical_device, self.current_frame)?;
 
-        let (image_index, _is_sub_optimal) = swapchain.acquire_next_image(wait_semaphores[0])?;
+        let image_index = match swapchain.acquire_next_image(wait_semaphores[0]) {
+            Ok((image_index, _)) => image_index,
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return Ok(true),
+            Err(e) => return Err(anyhow::Error::new(e)),
+        };
 
         let command_buffers = [self.logic.command_buffer(image_index as usize)];
 
@@ -59,11 +63,21 @@ where
                 .queue_submit(logical_device.queues().graphics_queue, &submit_infos, wait_fence)?;
         };
 
-        swapchain.present_image(logical_device, &signal_semaphores, image_index)?;
+        let was_resized = swapchain.present_image(logical_device, &signal_semaphores, image_index)?;
 
         self.current_frame = self.frame_sync_objects.next_frame(self.current_frame);
 
-        Ok(())
+        Ok(was_resized)
+    }
+
+    pub fn recreate_logic(
+        &mut self,
+        logical_device: &LogicalDevice,
+        command_pool: &CommandPool,
+        swapchain: &Swapchain,
+    ) -> Result<()> {
+        self.logic
+            .recreate_command_buffers(logical_device, command_pool, swapchain)
     }
 
     pub unsafe fn destroy(&self, logical_device: &LogicalDevice, command_pool: &CommandPool) {

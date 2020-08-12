@@ -76,7 +76,7 @@ impl Instance {
     }
 
     #[inline]
-    pub fn get(&self) -> &ash::Instance {
+    pub fn handle(&self) -> &ash::Instance {
         &self.instance
     }
 

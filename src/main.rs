@@ -53,10 +53,10 @@ impl App {
         let window = Self::init_window(&event_loop)?;
 
         let instance = Instance::new(&entry, &window, IS_VALIDATION_ENABLED)?;
-        let validation = Validation::new(&entry, instance.get(), IS_VALIDATION_ENABLED)?;
-        let surface = Surface::new(&entry, instance.get(), &window)?;
-        let logical_device = LogicalDevice::new(instance.get(), &surface, IS_VALIDATION_ENABLED)?;
-        let swapchain = Swapchain::new(instance.get(), &surface, &logical_device, &window)?;
+        let validation = Validation::new(&entry, &instance, IS_VALIDATION_ENABLED)?;
+        let surface = Surface::new(&entry, &instance, &window)?;
+        let logical_device = LogicalDevice::new(&instance, &surface, IS_VALIDATION_ENABLED)?;
+        let swapchain = Swapchain::new(&instance, &surface, &logical_device, &window)?;
         let pipeline_cache = PipelineCache::new(&logical_device)?;
         let command_pool = CommandPool::new(&logical_device)?;
 
@@ -89,11 +89,27 @@ impl App {
         Ok(window)
     }
 
-    fn draw_frame(&mut self) -> Result<()> {
-        self.frame.draw(&self.logical_device, &self.swapchain)
+    fn draw_frame(&mut self, window: &Window) -> Result<()> {
+        let window_size = window.inner_size();
+        if window_size.width == 0 || window_size.height == 0 {
+            return Ok(());
+        }
+
+        let was_resized = self.frame.draw(&self.logical_device, &self.swapchain)?;
+        if was_resized {
+            self.logical_device.wait_idle()?;
+            unsafe {
+                self.swapchain.destroy(&self.logical_device);
+            }
+            self.swapchain = Swapchain::new(&self.instance, &self.surface, &self.logical_device, window)?;
+            self.frame
+                .recreate_logic(&self.logical_device, &self.command_pool, &self.swapchain)?;
+        }
+
+        Ok(())
     }
 
-    fn run(mut self, event_loop: EventLoop<()>, _window: Window) -> ! {
+    fn run(mut self, event_loop: EventLoop<()>, window: Window) -> ! {
         event_loop.run(move |event, _, control_flow| match event {
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
@@ -101,8 +117,9 @@ impl App {
             } => {
                 *control_flow = ControlFlow::Exit;
             }
-            Event::MainEventsCleared => {
-                if let Err(e) = self.draw_frame() {
+            Event::MainEventsCleared => window.request_redraw(),
+            Event::RedrawRequested(_) => {
+                if let Err(e) = self.draw_frame(&window) {
                     log::error!("draw_frame error: {:?}", e);
                 }
             }

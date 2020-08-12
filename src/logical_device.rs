@@ -4,6 +4,7 @@ use anyhow::{Error, Result};
 use ash::version::{DeviceV1_0, InstanceV1_0};
 use ash::vk;
 
+use crate::instance::Instance;
 use crate::surface::Surface;
 use crate::utils;
 use crate::validation;
@@ -12,20 +13,19 @@ pub struct LogicalDevice {
     device: ash::Device,
     physical_device: vk::PhysicalDevice,
     queues: Queues,
-    swapchain_support: SwapchainSupportInfo,
 }
 
 impl LogicalDevice {
-    pub fn new(instance: &ash::Instance, surface: &Surface, is_validation_enabled: bool) -> Result<Self> {
-        let (physical_device, swapchain_support, queue_indices) = pick_physical_device(instance, surface)?;
-        let (device, queues) = create_logical_device(instance, physical_device, queue_indices, is_validation_enabled)?;
+    pub fn new(instance: &Instance, surface: &Surface, is_validation_enabled: bool) -> Result<Self> {
+        let (physical_device, queue_indices) = pick_physical_device(instance.handle(), surface)?;
+        let (device, queues) =
+            create_logical_device(instance.handle(), physical_device, queue_indices, is_validation_enabled)?;
         log::debug!("created logical device");
 
         Ok(Self {
             device,
             physical_device,
             queues,
-            swapchain_support,
         })
     }
 
@@ -47,10 +47,8 @@ impl LogicalDevice {
         &self.queues
     }
 
-    #[allow(unused)]
-    #[inline]
-    pub fn swapchain_support(&self) -> &SwapchainSupportInfo {
-        &self.swapchain_support
+    pub fn query_swapchain_support(&self, surface: &Surface) -> Result<SwapchainSupportInfo> {
+        query_swapchain_support(surface, self.physical_device)
     }
 
     pub fn wait_idle(&self) -> Result<()> {
@@ -174,20 +172,20 @@ fn create_logical_device(
 fn pick_physical_device(
     instance: &ash::Instance,
     surface: &Surface,
-) -> Result<(vk::PhysicalDevice, SwapchainSupportInfo, QueueFamilyIndices)> {
+) -> Result<(vk::PhysicalDevice, QueueFamilyIndices)> {
     let physical_devices = unsafe { instance.enumerate_physical_devices()? };
 
     let mut result = None;
     for &physical_device in physical_devices.iter() {
-        let info = check_physical_device(instance, surface, physical_device)?;
+        let indices = check_physical_device(instance, surface, physical_device)?;
 
-        if info.1.is_complete() && result.is_none() {
-            result = Some((physical_device, info));
+        if indices.is_complete() && result.is_none() {
+            result = Some((physical_device, indices));
         }
     }
 
     match result {
-        Some((device, (swapchain_support, indices))) => Ok((device, swapchain_support, indices)),
+        Some((device, indices)) => Ok((device, indices)),
         None => Err(Error::msg("no suitable physical device found")),
     }
 }
@@ -196,7 +194,7 @@ fn check_physical_device(
     instance: &ash::Instance,
     surface: &Surface,
     physical_device: vk::PhysicalDevice,
-) -> Result<(SwapchainSupportInfo, QueueFamilyIndices)> {
+) -> Result<QueueFamilyIndices> {
     // check device properties
     let device_properties = unsafe { instance.get_physical_device_properties(physical_device) };
 
@@ -287,7 +285,7 @@ fn check_physical_device(
     }
 
     // done
-    Ok((swapchain_support, queue_family_indices))
+    Ok(queue_family_indices)
 }
 
 fn query_swapchain_support(surface: &Surface, physical_device: vk::PhysicalDevice) -> Result<SwapchainSupportInfo> {

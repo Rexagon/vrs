@@ -2,6 +2,7 @@ use anyhow::Result;
 use ash::version::DeviceV1_0;
 use ash::vk;
 
+use crate::instance::Instance;
 use crate::logical_device::LogicalDevice;
 use crate::surface::Surface;
 
@@ -16,7 +17,7 @@ pub struct Swapchain {
 
 impl Swapchain {
     pub fn new(
-        instance: &ash::Instance,
+        instance: &Instance,
         surface: &Surface,
         logical_device: &LogicalDevice,
         window: &winit::window::Window,
@@ -24,7 +25,8 @@ impl Swapchain {
         let size = window.inner_size();
         let size = [size.width, size.height];
 
-        let (swapchain_ext, swapchain, format, extent) = create_swapchain(instance, surface, logical_device, size)?;
+        let (swapchain_ext, swapchain, format, extent) =
+            create_swapchain(instance.handle(), surface, logical_device, size)?;
         log::debug!("created swapchain");
 
         let images = unsafe { swapchain_ext.get_swapchain_images(swapchain)? };
@@ -61,7 +63,7 @@ impl Swapchain {
         self.images.len() as u32
     }
 
-    pub fn acquire_next_image(&self, semaphore: vk::Semaphore) -> Result<(u32, bool)> {
+    pub fn acquire_next_image(&self, semaphore: vk::Semaphore) -> Result<(u32, bool), vk::Result> {
         let (image_index, is_sub_optimal) = unsafe {
             self.swapchain_ext
                 .acquire_next_image(self.swapchain, std::u64::MAX, semaphore, vk::Fence::null())?
@@ -75,7 +77,7 @@ impl Swapchain {
         logical_device: &LogicalDevice,
         signal_semaphores: &[vk::Semaphore],
         image_index: u32,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let indices = [image_index];
 
         let swapchains = [self.swapchain];
@@ -84,12 +86,16 @@ impl Swapchain {
             .swapchains(&swapchains)
             .image_indices(&indices);
 
-        unsafe {
+        let result = unsafe {
             self.swapchain_ext
-                .queue_present(logical_device.queues().graphics_queue, &present_info)?;
-        }
+                .queue_present(logical_device.queues().graphics_queue, &present_info)
+        };
 
-        Ok(())
+        match result {
+            Ok(is_sub_optimal) => Ok(is_sub_optimal),
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Ok(true),
+            Err(e) => Err(e.into()),
+        }
     }
 
     pub unsafe fn destroy(&self, logical_device: &LogicalDevice) {
@@ -111,7 +117,7 @@ fn create_swapchain(
     vk::Format,
     vk::Extent2D,
 )> {
-    let swapchain_support = logical_device.swapchain_support();
+    let swapchain_support = logical_device.query_swapchain_support(surface)?;
     let surface_format = choose_swapchain_format(&swapchain_support.available_formats);
     let present_mode = choose_swapchain_present_mode(&swapchain_support.available_present_modes);
     let extent = choose_swapchain_extent(&swapchain_support.capabilities, size);
@@ -168,12 +174,12 @@ fn choose_swapchain_format(available_formats: &[vk::SurfaceFormatKHR]) -> vk::Su
     return available_formats.first().unwrap().clone();
 }
 
-fn choose_swapchain_present_mode(available_present_modes: &[vk::PresentModeKHR]) -> vk::PresentModeKHR {
-    for &available_present_mode in available_present_modes {
-        if available_present_mode == vk::PresentModeKHR::MAILBOX {
-            return available_present_mode;
-        }
-    }
+fn choose_swapchain_present_mode(_available_present_modes: &[vk::PresentModeKHR]) -> vk::PresentModeKHR {
+    // for &available_present_mode in available_present_modes {
+    //     if available_present_mode == vk::PresentModeKHR::MAILBOX {
+    //         return available_present_mode;
+    //     }
+    // }
 
     vk::PresentModeKHR::FIFO
 }
