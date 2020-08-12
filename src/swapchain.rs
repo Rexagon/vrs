@@ -15,9 +15,16 @@ pub struct Swapchain {
 }
 
 impl Swapchain {
-    pub fn new(instance: &ash::Instance, surface: &Surface, logical_device: &LogicalDevice) -> Result<Self> {
-        let (swapchain_ext, swapchain, format, extent) =
-            create_swapchain(instance, surface, logical_device, [800, 600])?;
+    pub fn new(
+        instance: &ash::Instance,
+        surface: &Surface,
+        logical_device: &LogicalDevice,
+        window: &winit::window::Window,
+    ) -> Result<Self> {
+        let size = window.inner_size();
+        let size = [size.width, size.height];
+
+        let (swapchain_ext, swapchain, format, extent) = create_swapchain(instance, surface, logical_device, size)?;
         log::debug!("created swapchain");
 
         let images = unsafe { swapchain_ext.get_swapchain_images(swapchain)? };
@@ -35,11 +42,6 @@ impl Swapchain {
     }
 
     #[inline]
-    pub fn handle(&self) -> vk::SwapchainKHR {
-        self.swapchain
-    }
-
-    #[inline]
     pub fn format(&self) -> vk::Format {
         self.format
     }
@@ -52,6 +54,11 @@ impl Swapchain {
     #[inline]
     pub fn extent(&self) -> vk::Extent2D {
         self.extent
+    }
+
+    #[inline]
+    pub fn image_count(&self) -> u32 {
+        self.images.len() as u32
     }
 
     pub fn acquire_next_image(&self, semaphore: vk::Semaphore) -> Result<(u32, bool)> {

@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 mod command_buffer;
+mod frame;
 mod framebuffer;
 mod instance;
 mod logical_device;
@@ -14,18 +15,16 @@ mod validation;
 extern crate nalgebra_glm as glm;
 
 use anyhow::Result;
-use ash::version::DeviceV1_0;
-use ash::vk;
 use winit::dpi::LogicalSize;
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 
-use crate::command_buffer::{CommandPool, CurrentFrame, FrameSyncObjects};
-use crate::framebuffer::Framebuffer;
+use crate::command_buffer::CommandPool;
+use crate::frame::{Frame, SimpleFrameLogic};
 use crate::instance::Instance;
 use crate::logical_device::LogicalDevice;
-use crate::pipeline::{DefaultPipeline, SimpleRenderPass};
+use crate::pipeline::PipelineCache;
 use crate::surface::Surface;
 use crate::swapchain::Swapchain;
 use crate::validation::Validation;
@@ -38,14 +37,10 @@ struct App {
     validation: Validation,
     instance: Instance,
     swapchain: Swapchain,
-    simple_render_pass: SimpleRenderPass,
-    pipeline: DefaultPipeline,
-    framebuffers: Vec<Framebuffer>,
-
+    pipeline_cache: PipelineCache,
     command_pool: CommandPool,
-    command_buffers: Vec<vk::CommandBuffer>,
-    frame_sync_objects: FrameSyncObjects,
-    current_frame: CurrentFrame,
+
+    frame: Frame<SimpleFrameLogic>,
 
     _entry: ash::Entry,
 }
@@ -61,35 +56,12 @@ impl App {
         let validation = Validation::new(&entry, instance.get(), IS_VALIDATION_ENABLED)?;
         let surface = Surface::new(&entry, instance.get(), &window)?;
         let logical_device = LogicalDevice::new(instance.get(), &surface, IS_VALIDATION_ENABLED)?;
-        let swapchain = Swapchain::new(instance.get(), &surface, &logical_device)?;
-
-        let simple_render_pass = SimpleRenderPass::new(&logical_device, swapchain.format())?;
-        let pipeline = DefaultPipeline::new(&logical_device, swapchain.extent(), &simple_render_pass)?;
-        let framebuffers =
-            swapchain
-                .image_views()
-                .iter()
-                .try_fold(Vec::<Framebuffer>::new(), |mut framebuffers, &view| {
-                    Framebuffer::new(&logical_device, simple_render_pass.handle(), view, swapchain.extent()).map(
-                        |framebuffer| {
-                            framebuffers.push(framebuffer);
-                            framebuffers
-                        },
-                    )
-                })?;
-
+        let swapchain = Swapchain::new(instance.get(), &surface, &logical_device, &window)?;
+        let pipeline_cache = PipelineCache::new(&logical_device)?;
         let command_pool = CommandPool::new(&logical_device)?;
 
-        let command_buffers = command_buffer::create_command_buffers(
-            &logical_device,
-            &command_pool,
-            &pipeline,
-            &framebuffers,
-            &simple_render_pass,
-            &swapchain,
-        )?;
-
-        let frame_sync_objects = FrameSyncObjects::new(&logical_device, 2)?;
+        let frame_logic = SimpleFrameLogic::new(&logical_device, &pipeline_cache, &command_pool, &swapchain)?;
+        let frame = Frame::new(&logical_device, frame_logic)?;
 
         Ok((
             event_loop,
@@ -100,13 +72,9 @@ impl App {
                 surface,
                 instance,
                 swapchain,
-                simple_render_pass,
-                pipeline,
-                framebuffers,
+                pipeline_cache,
                 command_pool,
-                command_buffers,
-                frame_sync_objects,
-                current_frame: Default::default(),
+                frame,
                 _entry: entry,
             },
         ))
@@ -122,44 +90,10 @@ impl App {
     }
 
     fn draw_frame(&mut self) -> Result<()> {
-        let wait_semaphores = [self.frame_sync_objects.image_available_semaphore(self.current_frame)];
-        let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-        let wait_fence = self.frame_sync_objects.inflight_fence(self.current_frame);
-        let signal_semaphores = [self.frame_sync_objects.render_finished_semaphore(self.current_frame)];
-
-        self.frame_sync_objects
-            .wait_for_fence(&self.logical_device, self.current_frame)?;
-
-        let (image_index, _is_sub_optimal) = self.swapchain.acquire_next_image(wait_semaphores[0])?;
-
-        let command_buffers = [self.command_buffers[image_index as usize]];
-
-        self.frame_sync_objects
-            .reset_fences(&self.logical_device, self.current_frame)?;
-
-        let submit_infos = [vk::SubmitInfo::builder()
-            .wait_semaphores(&wait_semaphores)
-            .wait_dst_stage_mask(&wait_stages)
-            .command_buffers(&command_buffers)
-            .signal_semaphores(&signal_semaphores)
-            .build()];
-        unsafe {
-            self.logical_device.handle().queue_submit(
-                self.logical_device.queues().graphics_queue,
-                &submit_infos,
-                wait_fence,
-            )?;
-        };
-
-        self.swapchain
-            .present_image(&self.logical_device, &signal_semaphores, image_index)?;
-
-        self.current_frame = self.frame_sync_objects.next_frame(self.current_frame);
-
-        Ok(())
+        self.frame.draw(&self.logical_device, &self.swapchain)
     }
 
-    fn run(mut self, event_loop: EventLoop<()>, window: Window) -> ! {
+    fn run(mut self, event_loop: EventLoop<()>, _window: Window) -> ! {
         event_loop.run(move |event, _, control_flow| match event {
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
@@ -185,16 +119,9 @@ impl App {
 impl Drop for App {
     fn drop(&mut self) {
         unsafe {
-            self.frame_sync_objects.destroy(&self.logical_device);
-
+            self.frame.destroy(&self.logical_device, &self.command_pool);
             self.command_pool.destroy(&self.logical_device);
-
-            self.framebuffers
-                .iter()
-                .for_each(|item| item.destroy(&self.logical_device));
-
-            self.pipeline.destroy(&self.logical_device);
-            self.simple_render_pass.destroy(&self.logical_device);
+            self.pipeline_cache.destroy(&self.logical_device);
             self.swapchain.destroy(&self.logical_device);
             self.logical_device.destroy();
             self.surface.destroy();
