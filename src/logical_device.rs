@@ -12,12 +12,14 @@ use crate::validation;
 pub struct LogicalDevice {
     device: ash::Device,
     physical_device: vk::PhysicalDevice,
+    memory_properties: vk::PhysicalDeviceMemoryProperties,
     queues: Queues,
 }
 
 impl LogicalDevice {
     pub fn new(instance: &Instance, surface: &Surface, is_validation_enabled: bool) -> Result<Self> {
         let (physical_device, queue_indices) = pick_physical_device(instance.handle(), surface)?;
+        let memory_properties = unsafe { instance.handle().get_physical_device_memory_properties(physical_device) };
         let (device, queues) =
             create_logical_device(instance.handle(), physical_device, queue_indices, is_validation_enabled)?;
         log::debug!("created logical device");
@@ -25,6 +27,7 @@ impl LogicalDevice {
         Ok(Self {
             device,
             physical_device,
+            memory_properties,
             queues,
         })
     }
@@ -35,10 +38,19 @@ impl LogicalDevice {
         self.physical_device
     }
 
-    #[allow(unused)]
     #[inline]
     pub fn handle(&self) -> &ash::Device {
         &self.device
+    }
+
+    #[inline]
+    pub fn memory_properties(&self) -> &vk::PhysicalDeviceMemoryProperties {
+        &self.memory_properties
+    }
+
+    #[inline]
+    pub fn get_buffer_memory_requirements(&self, buffer: vk::Buffer) -> vk::MemoryRequirements {
+        unsafe { self.device.get_buffer_memory_requirements(buffer) }
     }
 
     #[allow(unused)]

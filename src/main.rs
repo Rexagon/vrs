@@ -1,10 +1,14 @@
 #![windows_subsystem = "windows"]
 
+#[macro_use]
+extern crate memoffset;
+
 mod command_buffer;
 mod frame;
 mod framebuffer;
 mod instance;
 mod logical_device;
+mod mesh;
 mod pipeline;
 mod shader;
 mod surface;
@@ -21,9 +25,10 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 
 use crate::command_buffer::CommandPool;
-use crate::frame::{Frame, SimpleFrameLogic};
+use crate::frame::{Frame, FrameLogic, SimpleFrameLogic};
 use crate::instance::Instance;
 use crate::logical_device::LogicalDevice;
+use crate::mesh::VertexBuffer;
 use crate::pipeline::PipelineCache;
 use crate::surface::Surface;
 use crate::swapchain::Swapchain;
@@ -40,6 +45,7 @@ struct App {
     pipeline_cache: PipelineCache,
     command_pool: CommandPool,
 
+    meshes: Vec<VertexBuffer>,
     frame: Frame<SimpleFrameLogic>,
 
     _entry: ash::Entry,
@@ -60,7 +66,12 @@ impl App {
         let pipeline_cache = PipelineCache::new(&logical_device)?;
         let command_pool = CommandPool::new(&logical_device)?;
 
-        let frame_logic = SimpleFrameLogic::new(&logical_device, &pipeline_cache, &command_pool, &swapchain)?;
+        let meshes = vec![VertexBuffer::new(&logical_device)?];
+
+        let mut frame_logic = SimpleFrameLogic::new(&logical_device, &pipeline_cache, &command_pool, &swapchain)?;
+        frame_logic.update_meshes(&meshes);
+        frame_logic.recreate_command_buffers(&logical_device, &command_pool, &swapchain)?;
+
         let frame = Frame::new(&logical_device, frame_logic)?;
 
         Ok((
@@ -74,6 +85,7 @@ impl App {
                 swapchain,
                 pipeline_cache,
                 command_pool,
+                meshes,
                 frame,
                 _entry: entry,
             },
@@ -137,6 +149,7 @@ impl Drop for App {
     fn drop(&mut self) {
         unsafe {
             self.frame.destroy(&self.logical_device, &self.command_pool);
+            self.meshes.iter().for_each(|mesh| mesh.destroy(&self.logical_device));
             self.command_pool.destroy(&self.logical_device);
             self.pipeline_cache.destroy(&self.logical_device);
             self.swapchain.destroy(&self.logical_device);

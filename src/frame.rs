@@ -5,6 +5,7 @@ use ash::vk;
 use crate::command_buffer::CommandPool;
 use crate::framebuffer::Framebuffer;
 use crate::logical_device::LogicalDevice;
+use crate::mesh::{Vertex, VertexBuffer};
 use crate::pipeline::PipelineCache;
 use crate::shader::{self, ShaderModule};
 use crate::swapchain::Swapchain;
@@ -194,6 +195,8 @@ pub struct SimpleFrameLogic {
     graphics_pipeline: vk::Pipeline,
     command_buffers: Vec<vk::CommandBuffer>,
     framebuffers: Vec<Framebuffer>,
+
+    meshes: Vec<(vk::Buffer, u64, u32)>,
 }
 
 impl SimpleFrameLogic {
@@ -216,12 +219,20 @@ impl SimpleFrameLogic {
             graphics_pipeline: vk::Pipeline::null(),
             command_buffers: Vec::new(),
             framebuffers: Vec::new(),
+            meshes: Vec::new(),
         };
 
         result.recreate_pipeline(logical_device, pipeline_cache)?;
         result.recreate_command_buffers(logical_device, command_pool, swapchain)?;
 
         Ok(result)
+    }
+
+    pub fn update_meshes(&mut self, vertex_buffers: &[VertexBuffer]) {
+        self.meshes = vertex_buffers
+            .iter()
+            .map(|buffer| (buffer.handle(), 0, buffer.index_count()))
+            .collect();
     }
 
     pub fn recreate_pipeline(&mut self, logical_device: &LogicalDevice, pipeline_cache: &PipelineCache) -> Result<()> {
@@ -242,9 +253,12 @@ impl SimpleFrameLogic {
         ];
 
         // vertex input state
+        let binding_descriptions = Vertex::get_binding_descriptions();
+        let attribute_descriptions = Vertex::get_attribute_descriptions();
+
         let vertex_input_state_create_info = vk::PipelineVertexInputStateCreateInfo::builder()
-            .vertex_attribute_descriptions(&[])
-            .vertex_binding_descriptions(&[]);
+            .vertex_binding_descriptions(&binding_descriptions)
+            .vertex_attribute_descriptions(&attribute_descriptions);
 
         let input_assembly_state_create_info = vk::PipelineInputAssemblyStateCreateInfo::builder()
             .primitive_restart_enable(false)
@@ -427,8 +441,17 @@ impl FrameLogic for SimpleFrameLogic {
                 device.cmd_begin_render_pass(command_buffer, &render_pass_begin_info, vk::SubpassContents::INLINE);
                 device.cmd_set_viewport(command_buffer, 0, &viewports);
                 device.cmd_set_scissor(command_buffer, 0, &scissors);
+
                 device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, self.graphics_pipeline);
-                device.cmd_draw(command_buffer, 3, 1, 0, 0);
+
+                for &(vertex_buffer, offset, index_count) in &self.meshes {
+                    let vertex_buffers = [vertex_buffer];
+                    let offsets = [offset];
+
+                    device.cmd_bind_vertex_buffers(command_buffer, 0, &vertex_buffers, &offsets);
+                    device.cmd_draw(command_buffer, index_count, 1, 0, 0);
+                }
+
                 device.cmd_end_render_pass(command_buffer);
                 device.end_command_buffer(command_buffer)?;
             }

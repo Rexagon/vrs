@@ -12,6 +12,7 @@ bytemuck = "1"
 env_logger = "0.7"
 gltf = { version = "0.15", features = ["utils"] }
 log = "0.4"
+memoffset = "0.5"
 nalgebra = "0.20"
 nalgebra-glm = "0.7"
 num = "0.3"
