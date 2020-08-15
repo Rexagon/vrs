@@ -1,5 +1,5 @@
 use super::prelude::*;
-use super::{CommandPool, Device};
+use super::{Buffer, CommandPool, Device};
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -79,7 +79,7 @@ impl Mesh {
 
             assert_eq!(staging_buffer_size as usize, vertices_data.len() + indices_data.len());
 
-            device.handle().unmap_memory(staging_buffer.memory);
+            device.handle().unmap_memory(staging_buffer.memory());
         }
 
         // create vertex buffer
@@ -186,86 +186,6 @@ impl Mesh {
     pub fn index_buffer(&self) -> &Buffer {
         &self.index_buffer
     }
-}
-
-pub struct Buffer {
-    buffer: vk::Buffer,
-    memory: vk::DeviceMemory,
-}
-
-impl Buffer {
-    pub fn new(
-        device: &Device,
-        size: vk::DeviceSize,
-        usage: vk::BufferUsageFlags,
-        required_properties: vk::MemoryPropertyFlags,
-    ) -> Result<Self> {
-        // create buffer
-        let buffer_create_info = vk::BufferCreateInfo::builder()
-            .size(size)
-            .usage(usage)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE);
-
-        let buffer = unsafe { device.handle().create_buffer(&buffer_create_info, None)? };
-        log::debug!("created buffer {:?}", buffer);
-
-        // find memory type
-        let memory_requirements = device.get_buffer_memory_requirements(buffer);
-
-        let memory_type = find_memory_type(
-            device.memory_properties(),
-            required_properties,
-            memory_requirements.memory_type_bits,
-        )?;
-
-        // allocate memory
-        let allocate_info = vk::MemoryAllocateInfo::builder()
-            .allocation_size(memory_requirements.size)
-            .memory_type_index(memory_type);
-
-        let memory = unsafe { device.handle().allocate_memory(&allocate_info, None)? };
-        log::debug!("allocated buffer memory {:?}", memory);
-
-        // bind buffer memory
-        unsafe { device.handle().bind_buffer_memory(buffer, memory, 0)? };
-
-        // done
-        Ok(Self { buffer, memory })
-    }
-
-    pub unsafe fn destroy(&self, device: &Device) {
-        let device = device.handle();
-
-        device.destroy_buffer(self.buffer, None);
-        log::debug!("dropped buffer {:?}", self.buffer);
-
-        device.free_memory(self.memory, None);
-        log::debug!("freed buffer memory {:?}", self.memory);
-    }
-
-    #[inline]
-    pub fn handle(&self) -> vk::Buffer {
-        self.buffer
-    }
-
-    #[inline]
-    pub fn memory(&self) -> vk::DeviceMemory {
-        self.memory
-    }
-}
-
-pub fn find_memory_type(
-    memory_properties: &vk::PhysicalDeviceMemoryProperties,
-    required_properties: vk::MemoryPropertyFlags,
-    type_filter: u32,
-) -> Result<u32> {
-    for (i, memory_type) in memory_properties.memory_types.iter().enumerate() {
-        if (type_filter & (1 << i)) > 0 && memory_type.property_flags.contains(required_properties) {
-            return Ok(i as u32);
-        }
-    }
-
-    Err(Error::msg("failed to find suitable memory type"))
 }
 
 pub const QUAD_VERTICES: [Vertex; 4] = [

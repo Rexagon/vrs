@@ -1,3 +1,4 @@
+pub mod buffer;
 pub mod command_buffer;
 pub mod device;
 pub mod frame;
@@ -11,6 +12,7 @@ pub mod swapchain;
 pub mod utils;
 pub mod validation;
 
+pub use self::buffer::Buffer;
 pub use self::command_buffer::CommandPool;
 pub use self::device::Device;
 pub use self::frame::{Frame, FrameLogic, FrameSyncObjects};

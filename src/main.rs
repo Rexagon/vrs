@@ -8,12 +8,13 @@ mod rendering;
 extern crate nalgebra_glm as glm;
 
 use anyhow::Result;
-use rendering::frame::SimpleFrameLogic;
 use rendering::*;
 use winit::dpi::LogicalSize;
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
+
+use crate::rendering::frame::{SimpleFrameLogic, WorldData};
 
 const IS_VALIDATION_ENABLED: bool = true;
 
@@ -54,11 +55,12 @@ impl App {
             &mesh::QUAD_INDICES,
         )?];
 
-        let mut frame_logic = SimpleFrameLogic::new(&device, &pipeline_cache, &command_pool, &swapchain)?;
-        frame_logic.update_meshes(&meshes);
-        frame_logic.recreate_command_buffers(&device, &command_pool, &swapchain)?;
-
-        let frame = Frame::new(&device, frame_logic)?;
+        let frame_logic = SimpleFrameLogic::new(&device, &pipeline_cache, &command_pool, &swapchain)?;
+        let mut frame = Frame::new(&device, &swapchain, frame_logic)?;
+        frame.logic_mut().update_meshes(&meshes);
+        frame
+            .logic_mut()
+            .recreate_command_buffers(&device, &command_pool, &swapchain)?;
 
         Ok((
             event_loop,
@@ -92,6 +94,22 @@ impl App {
         if window_size.width == 0 || window_size.height == 0 {
             return Ok(());
         }
+
+        let current_frame = self.frame.current_frame();
+        let world_data = WorldData {
+            view: glm::translation(&glm::vec3(0.0, 0.0, -1.0)),
+            projection: glm::perspective(
+                window_size.width as f32 / window_size.height as f32,
+                f32::to_radians(90.0),
+                0.01,
+                100.0,
+            ),
+        };
+        self.frame
+            .logic_mut()
+            .pipeline_layout_mut()
+            .uniform_buffers_mut()
+            .update_world_data(&self.device, current_frame, &world_data)?;
 
         let was_resized = self.frame.draw(&self.device, &self.swapchain)?;
         if was_resized {
