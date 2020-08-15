@@ -66,7 +66,12 @@ impl App {
         let pipeline_cache = PipelineCache::new(&logical_device)?;
         let command_pool = CommandPool::new(&logical_device)?;
 
-        let meshes = vec![Mesh::new(&logical_device, &command_pool, &mesh::TRIANGLE)?];
+        let meshes = vec![Mesh::new(
+            &logical_device,
+            &command_pool,
+            &mesh::QUAD_VERTICES,
+            &mesh::QUAD_INDICES,
+        )?];
 
         let mut frame_logic = SimpleFrameLogic::new(&logical_device, &pipeline_cache, &command_pool, &swapchain)?;
         frame_logic.update_meshes(&meshes);

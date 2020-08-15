@@ -77,6 +77,7 @@ where
         command_pool: &CommandPool,
         swapchain: &Swapchain,
     ) -> Result<()> {
+        self.logic.recreate_frame_buffers(logical_device, swapchain)?;
         self.logic
             .recreate_command_buffers(logical_device, command_pool, swapchain)
     }
@@ -88,6 +89,7 @@ where
 }
 
 pub trait FrameLogic {
+    fn recreate_frame_buffers(&mut self, logical_device: &LogicalDevice, swapchain: &Swapchain) -> Result<()>;
     fn recreate_command_buffers(
         &mut self,
         logical_device: &LogicalDevice,
@@ -196,7 +198,7 @@ pub struct SimpleFrameLogic {
     command_buffers: Vec<vk::CommandBuffer>,
     framebuffers: Vec<Framebuffer>,
 
-    meshes: Vec<(vk::Buffer, u64, u32)>,
+    meshes: Vec<(vk::Buffer, vk::Buffer, u64, u32)>,
 }
 
 impl SimpleFrameLogic {
@@ -223,6 +225,7 @@ impl SimpleFrameLogic {
         };
 
         result.recreate_pipeline(logical_device, pipeline_cache)?;
+        result.recreate_frame_buffers(logical_device, swapchain)?;
         result.recreate_command_buffers(logical_device, command_pool, swapchain)?;
 
         Ok(result)
@@ -231,7 +234,14 @@ impl SimpleFrameLogic {
     pub fn update_meshes(&mut self, meshes: &[Mesh]) {
         self.meshes = meshes
             .iter()
-            .map(|mesh| (mesh.vertex_buffer().handle(), 0, mesh.index_count()))
+            .map(|mesh| {
+                (
+                    mesh.vertex_buffer().handle(),
+                    mesh.index_buffer().handle(),
+                    0,
+                    mesh.index_count(),
+                )
+            })
             .collect();
     }
 
@@ -377,31 +387,41 @@ impl SimpleFrameLogic {
 }
 
 impl FrameLogic for SimpleFrameLogic {
+    fn recreate_frame_buffers(&mut self, logical_device: &LogicalDevice, swapchain: &Swapchain) -> Result<()> {
+        // destroy framebuffers
+        unsafe { self.destroy_framebuffers(logical_device) };
+
+        // create framebuffers
+        self.framebuffers = swapchain.image_views().iter().try_fold(
+            Vec::with_capacity(swapchain.image_views().len()),
+            |mut framebuffers, &image_view| {
+                Framebuffer::new(
+                    logical_device,
+                    self.simple_render_pass.handle(),
+                    image_view,
+                    swapchain.extent(),
+                )
+                .map(|framebuffer| {
+                    framebuffers.push(framebuffer);
+                    framebuffers
+                })
+            },
+        )?;
+
+        // done
+        Ok(())
+    }
+
     fn recreate_command_buffers(
         &mut self,
         logical_device: &LogicalDevice,
         command_pool: &CommandPool,
         swapchain: &Swapchain,
     ) -> Result<()> {
-        unsafe {
-            self.free_command_buffers(logical_device, command_pool);
-            self.destroy_framebuffers(logical_device);
-        }
+        // free command buffers
+        unsafe { self.free_command_buffers(logical_device, command_pool) };
 
         let extent = swapchain.extent();
-
-        // create framebuffers
-        self.framebuffers = swapchain.image_views().iter().try_fold(
-            Vec::with_capacity(swapchain.image_views().len()),
-            |mut framebuffers, &image_view| {
-                Framebuffer::new(logical_device, self.simple_render_pass.handle(), image_view, extent).map(
-                    |framebuffer| {
-                        framebuffers.push(framebuffer);
-                        framebuffers
-                    },
-                )
-            },
-        )?;
 
         // create command buffers
         let device = logical_device.handle();
@@ -433,7 +453,7 @@ impl FrameLogic for SimpleFrameLogic {
                 .framebuffer(self.framebuffers[i].handle())
                 .render_area(vk::Rect2D {
                     offset: vk::Offset2D { x: 0, y: 0 },
-                    extent: swapchain.extent(),
+                    extent,
                 })
                 .clear_values(&clear_values);
 
@@ -444,12 +464,13 @@ impl FrameLogic for SimpleFrameLogic {
 
                 device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, self.graphics_pipeline);
 
-                for &(vertex_buffer, offset, index_count) in &self.meshes {
+                for &(vertex_buffer, index_buffer, offset, index_count) in &self.meshes {
                     let vertex_buffers = [vertex_buffer];
                     let offsets = [offset];
 
                     device.cmd_bind_vertex_buffers(command_buffer, 0, &vertex_buffers, &offsets);
-                    device.cmd_draw(command_buffer, index_count, 1, 0, 0);
+                    device.cmd_bind_index_buffer(command_buffer, index_buffer, 0, vk::IndexType::UINT16);
+                    device.cmd_draw_indexed(command_buffer, index_count, 1, 0, 0, 0);
                 }
 
                 device.cmd_end_render_pass(command_buffer);
