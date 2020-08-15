@@ -12,7 +12,49 @@ impl Device {
     pub fn new(instance: &Instance, surface: &Surface, is_validation_enabled: bool) -> Result<Self> {
         let (physical_device, queue_indices) = pick_physical_device(instance.handle(), surface)?;
         let memory_properties = unsafe { instance.handle().get_physical_device_memory_properties(physical_device) };
-        let (device, queues) = create_device(instance.handle(), physical_device, queue_indices, is_validation_enabled)?;
+
+        let unique_queue_families = queue_indices.unique_families();
+
+        let mut queue_create_infos = Vec::new();
+
+        let queue_priorities = [1.0f32];
+        for family in unique_queue_families.into_iter() {
+            queue_create_infos.push(
+                vk::DeviceQueueCreateInfo::builder()
+                    .queue_family_index(family)
+                    .queue_priorities(&queue_priorities)
+                    .build(),
+            );
+        }
+
+        //
+        let required_extensions = vec![
+            ash::extensions::khr::Swapchain::name().as_ptr(),
+            ash::extensions::nv::RayTracing::name().as_ptr(),
+        ];
+
+        //
+        let required_layers = if is_validation_enabled {
+            validation::required_layers()
+        } else {
+            &[]
+        };
+
+        let required_layers = utils::as_ptr_vec(&required_layers);
+
+        //
+        let device_create_info = vk::DeviceCreateInfo::builder()
+            .queue_create_infos(&queue_create_infos)
+            .enabled_extension_names(&required_extensions)
+            .enabled_layer_names(&required_layers);
+
+        //
+        let device = unsafe {
+            instance
+                .handle()
+                .create_device(physical_device, &device_create_info, None)?
+        };
+        let queues = Queues::new(&device, queue_indices)?;
         log::debug!("created logical device");
 
         Ok(Self {
@@ -41,11 +83,6 @@ impl Device {
             self.device.device_wait_idle()?;
         }
         Ok(())
-    }
-
-    #[inline]
-    pub fn physical(&self) -> vk::PhysicalDevice {
-        self.physical_device
     }
 
     #[inline]
@@ -119,54 +156,6 @@ impl Queues {
             present_queue,
         })
     }
-}
-
-fn create_device(
-    instance: &ash::Instance,
-    physical_device: vk::PhysicalDevice,
-    queue_indices: QueueFamilyIndices,
-    is_validation_enabled: bool,
-) -> Result<(ash::Device, Queues)> {
-    let unique_queue_families = queue_indices.unique_families();
-
-    let mut queue_create_infos = Vec::new();
-
-    let queue_priorities = [1.0f32];
-    for family in unique_queue_families.into_iter() {
-        queue_create_infos.push(
-            vk::DeviceQueueCreateInfo::builder()
-                .queue_family_index(family)
-                .queue_priorities(&queue_priorities)
-                .build(),
-        );
-    }
-
-    //
-    let required_extensions = vec![
-        ash::extensions::khr::Swapchain::name().as_ptr(),
-        ash::extensions::nv::RayTracing::name().as_ptr(),
-    ];
-
-    //
-    let required_layers = if is_validation_enabled {
-        validation::required_layers()
-    } else {
-        &[]
-    };
-
-    let required_layers = utils::as_ptr_vec(&required_layers);
-
-    //
-    let device_create_info = vk::DeviceCreateInfo::builder()
-        .queue_create_infos(&queue_create_infos)
-        .enabled_extension_names(&required_extensions)
-        .enabled_layer_names(&required_layers);
-
-    //
-    let device = unsafe { instance.create_device(physical_device, &device_create_info, None)? };
-    let queues = Queues::new(&device, queue_indices)?;
-
-    Ok((device, queues))
 }
 
 fn pick_physical_device(

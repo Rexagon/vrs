@@ -15,25 +15,70 @@ impl Swapchain {
         let size = window.inner_size();
         let size = [size.width, size.height];
 
-        let (swapchain_ext, swapchain, format, extent) = create_swapchain(instance.handle(), surface, device, size)?;
+        // select swapchain properties
+        let swapchain_support = device.query_swapchain_support(surface)?;
+        let surface_format = choose_swapchain_format(&swapchain_support.available_formats);
+        let present_mode = choose_swapchain_present_mode(&swapchain_support.available_present_modes);
+        let extent = choose_swapchain_extent(&swapchain_support.capabilities, size);
+
+        // select image count
+        let image_count = swapchain_support.capabilities.min_image_count + 1;
+        let image_count = if swapchain_support.capabilities.max_image_count > 0 {
+            std::cmp::min(image_count, swapchain_support.capabilities.max_image_count)
+        } else {
+            image_count
+        };
+
+        let queues = device.queues();
+
+        let (image_sharing_mode, queue_family_indices) = if queues.graphics_queue_family != queues.present_queue_family
+        {
+            (
+                vk::SharingMode::CONCURRENT,
+                vec![queues.graphics_queue_family, queues.present_queue_family],
+            )
+        } else {
+            (vk::SharingMode::EXCLUSIVE, Vec::new())
+        };
+
+        let swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
+            .surface(surface.handle())
+            .min_image_count(image_count)
+            .image_color_space(surface_format.color_space)
+            .image_format(surface_format.format)
+            .image_extent(extent)
+            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+            .image_sharing_mode(image_sharing_mode)
+            .queue_family_indices(&queue_family_indices)
+            .pre_transform(swapchain_support.capabilities.current_transform)
+            .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
+            .present_mode(present_mode)
+            .clipped(true)
+            .image_array_layers(1);
+
+        let swapchain_ext = ash::extensions::khr::Swapchain::new(instance.handle(), device.handle());
+        let swapchain = unsafe { swapchain_ext.create_swapchain(&swapchain_create_info, None)? };
         log::debug!("created swapchain");
 
         let images = unsafe { swapchain_ext.get_swapchain_images(swapchain)? };
 
-        let image_views = create_image_views(device.handle(), format, &images)?;
+        let image_views = create_image_views(device.handle(), surface_format.format, &images)?;
 
         Ok(Self {
             swapchain_ext,
             swapchain,
             images,
             image_views,
-            format,
+            format: surface_format.format,
             extent,
         })
     }
 
     pub unsafe fn destroy(&self, device: &Device) {
-        destroy_image_views(device.handle(), &self.image_views);
+        for &image_view in self.image_views.iter() {
+            device.handle().destroy_image_view(image_view, None);
+            log::debug!("dropped image view {:?}", image_view);
+        }
 
         self.swapchain_ext.destroy_swapchain(self.swapchain, None);
         log::debug!("dropped swapchain");
@@ -95,62 +140,6 @@ impl Swapchain {
     }
 }
 
-fn create_swapchain(
-    instance: &ash::Instance,
-    surface: &Surface,
-    device: &Device,
-    size: [u32; 2],
-) -> Result<(
-    ash::extensions::khr::Swapchain,
-    vk::SwapchainKHR,
-    vk::Format,
-    vk::Extent2D,
-)> {
-    let swapchain_support = device.query_swapchain_support(surface)?;
-    let surface_format = choose_swapchain_format(&swapchain_support.available_formats);
-    let present_mode = choose_swapchain_present_mode(&swapchain_support.available_present_modes);
-    let extent = choose_swapchain_extent(&swapchain_support.capabilities, size);
-
-    // select image count
-    let image_count = swapchain_support.capabilities.min_image_count + 1;
-    let image_count = if swapchain_support.capabilities.max_image_count > 0 {
-        std::cmp::min(image_count, swapchain_support.capabilities.max_image_count)
-    } else {
-        image_count
-    };
-
-    let queues = device.queues();
-
-    let (image_sharing_mode, queue_family_indices) = if queues.graphics_queue_family != queues.present_queue_family {
-        (
-            vk::SharingMode::CONCURRENT,
-            vec![queues.graphics_queue_family, queues.present_queue_family],
-        )
-    } else {
-        (vk::SharingMode::EXCLUSIVE, Vec::new())
-    };
-
-    let swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
-        .surface(surface.handle())
-        .min_image_count(image_count)
-        .image_color_space(surface_format.color_space)
-        .image_format(surface_format.format)
-        .image_extent(extent)
-        .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
-        .image_sharing_mode(image_sharing_mode)
-        .queue_family_indices(&queue_family_indices)
-        .pre_transform(swapchain_support.capabilities.current_transform)
-        .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
-        .present_mode(present_mode)
-        .clipped(true)
-        .image_array_layers(1);
-
-    let swapchain_ext = ash::extensions::khr::Swapchain::new(instance, device.handle());
-    let swapchain = unsafe { swapchain_ext.create_swapchain(&swapchain_create_info, None)? };
-
-    Ok((swapchain_ext, swapchain, surface_format.format, extent))
-}
-
 fn choose_swapchain_format(available_formats: &[vk::SurfaceFormatKHR]) -> vk::SurfaceFormatKHR {
     for available_format in available_formats {
         if available_format.format == vk::Format::B8G8R8A8_SRGB
@@ -163,12 +152,13 @@ fn choose_swapchain_format(available_formats: &[vk::SurfaceFormatKHR]) -> vk::Su
     return available_formats.first().unwrap().clone();
 }
 
-fn choose_swapchain_present_mode(_available_present_modes: &[vk::PresentModeKHR]) -> vk::PresentModeKHR {
-    // for &available_present_mode in available_present_modes {
-    //     if available_present_mode == vk::PresentModeKHR::MAILBOX {
-    //         return available_present_mode;
-    //     }
-    // }
+fn choose_swapchain_present_mode(available_present_modes: &[vk::PresentModeKHR]) -> vk::PresentModeKHR {
+    for &available_present_mode in available_present_modes {
+        // or vk::PresentModeKHR::MAILBOX
+        if available_present_mode == vk::PresentModeKHR::FIFO {
+            return available_present_mode;
+        }
+    }
 
     vk::PresentModeKHR::FIFO
 }
@@ -229,11 +219,4 @@ pub fn create_image_views(
     }
 
     Ok(result)
-}
-
-pub unsafe fn destroy_image_views(device: &ash::Device, image_views: &[vk::ImageView]) {
-    for &image_view in image_views.iter() {
-        device.destroy_image_view(image_view, None);
-        log::debug!("dropped image view {:?}", image_view);
-    }
 }

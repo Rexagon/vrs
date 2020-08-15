@@ -16,13 +16,13 @@ impl CommandPool {
         Ok(Self { command_pool })
     }
 
-    #[inline]
-    pub fn handle(&self) -> vk::CommandPool {
-        self.command_pool
-    }
-
     pub unsafe fn destroy(&self, device: &Device) {
         device.handle().destroy_command_pool(self.command_pool, None);
         log::debug!("dropped command pool {:?}", self.command_pool);
+    }
+
+    #[inline]
+    pub fn handle(&self) -> vk::CommandPool {
+        self.command_pool
     }
 }
