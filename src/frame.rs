@@ -5,7 +5,7 @@ use ash::vk;
 use crate::command_buffer::CommandPool;
 use crate::framebuffer::Framebuffer;
 use crate::logical_device::LogicalDevice;
-use crate::mesh::{Vertex, VertexBuffer};
+use crate::mesh::{Mesh, Vertex};
 use crate::pipeline::PipelineCache;
 use crate::shader::{self, ShaderModule};
 use crate::swapchain::Swapchain;
@@ -228,10 +228,10 @@ impl SimpleFrameLogic {
         Ok(result)
     }
 
-    pub fn update_meshes(&mut self, vertex_buffers: &[VertexBuffer]) {
-        self.meshes = vertex_buffers
+    pub fn update_meshes(&mut self, meshes: &[Mesh]) {
+        self.meshes = meshes
             .iter()
-            .map(|buffer| (buffer.handle(), 0, buffer.index_count()))
+            .map(|mesh| (mesh.vertex_buffer().handle(), 0, mesh.index_count()))
             .collect();
     }
 

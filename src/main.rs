@@ -28,7 +28,7 @@ use crate::command_buffer::CommandPool;
 use crate::frame::{Frame, FrameLogic, SimpleFrameLogic};
 use crate::instance::Instance;
 use crate::logical_device::LogicalDevice;
-use crate::mesh::VertexBuffer;
+use crate::mesh::Mesh;
 use crate::pipeline::PipelineCache;
 use crate::surface::Surface;
 use crate::swapchain::Swapchain;
@@ -45,7 +45,7 @@ struct App {
     pipeline_cache: PipelineCache,
     command_pool: CommandPool,
 
-    meshes: Vec<VertexBuffer>,
+    meshes: Vec<Mesh>,
     frame: Frame<SimpleFrameLogic>,
 
     _entry: ash::Entry,
@@ -66,7 +66,7 @@ impl App {
         let pipeline_cache = PipelineCache::new(&logical_device)?;
         let command_pool = CommandPool::new(&logical_device)?;
 
-        let meshes = vec![VertexBuffer::new(&logical_device)?];
+        let meshes = vec![Mesh::new(&logical_device, &command_pool, &mesh::TRIANGLE)?];
 
         let mut frame_logic = SimpleFrameLogic::new(&logical_device, &pipeline_cache, &command_pool, &swapchain)?;
         frame_logic.update_meshes(&meshes);
