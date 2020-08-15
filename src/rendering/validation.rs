@@ -1,11 +1,5 @@
-use std::ffi::{c_void, CStr, CString};
-
-use anyhow::{Error, Result};
-use ash::version::EntryV1_0;
-use ash::vk;
-use once_cell::*;
-
-use crate::instance::Instance;
+use super::prelude::*;
+use super::Instance;
 
 pub struct Validation {
     is_enabled: bool,
@@ -34,6 +28,14 @@ impl Validation {
         })
     }
 
+    pub unsafe fn destroy(&self) {
+        if self.is_enabled {
+            self.debug_utils_ext
+                .destroy_debug_utils_messenger(self.debug_utils_messenger, None);
+            log::debug!("dropped debug utils messenger");
+        }
+    }
+
     #[allow(unused)]
     #[inline]
     pub fn is_enabled(&self) -> bool {
@@ -44,14 +46,6 @@ impl Validation {
     #[inline]
     pub fn ext(&self) -> &ash::extensions::ext::DebugUtils {
         &self.debug_utils_ext
-    }
-
-    pub unsafe fn destroy(&self) {
-        if self.is_enabled {
-            self.debug_utils_ext
-                .destroy_debug_utils_messenger(self.debug_utils_messenger, None);
-            log::debug!("dropped debug utils messenger");
-        }
     }
 }
 
@@ -131,4 +125,4 @@ unsafe extern "system" fn vulkan_debug_utils_callback(
     vk::FALSE
 }
 
-static REQUIRED_LAYERS: sync::OnceCell<Vec<CString>> = sync::OnceCell::new();
+static REQUIRED_LAYERS: OnceCell<Vec<CString>> = OnceCell::new();

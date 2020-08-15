@@ -1,15 +1,5 @@
-use anyhow::Result;
-use ash::version::DeviceV1_0;
-use ash::vk;
-
-use crate::command_buffer::CommandPool;
-use crate::framebuffer::Framebuffer;
-use crate::logical_device::LogicalDevice;
-use crate::mesh::{Mesh, Vertex};
-use crate::pipeline::PipelineCache;
-use crate::shader::{self, ShaderModule};
-use crate::swapchain::Swapchain;
-use crate::utils;
+use super::prelude::*;
+use super::{shader, utils, CommandPool, Device, Framebuffer, Mesh, PipelineCache, ShaderModule, Swapchain, Vertex};
 
 pub struct Frame<T> {
     logic: T,
@@ -21,9 +11,9 @@ impl<T> Frame<T>
 where
     T: FrameLogic,
 {
-    pub fn new(logical_device: &LogicalDevice, logic: T) -> Result<Self> {
+    pub fn new(device: &Device, logic: T) -> Result<Self> {
         let current_frame = 0;
-        let frame_sync_objects = FrameSyncObjects::new(logical_device, 2)?;
+        let frame_sync_objects = FrameSyncObjects::new(device, 2)?;
 
         Ok(Self {
             logic,
@@ -32,14 +22,18 @@ where
         })
     }
 
-    pub fn draw(&mut self, logical_device: &LogicalDevice, swapchain: &Swapchain) -> Result<bool> {
+    pub unsafe fn destroy(&self, device: &Device, command_pool: &CommandPool) {
+        self.logic.destroy(device, command_pool);
+        self.frame_sync_objects.destroy(device);
+    }
+
+    pub fn draw(&mut self, device: &Device, swapchain: &Swapchain) -> Result<bool> {
         let wait_semaphores = [self.frame_sync_objects.image_available_semaphore(self.current_frame)];
         let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
         let wait_fence = self.frame_sync_objects.inflight_fence(self.current_frame);
         let signal_semaphores = [self.frame_sync_objects.render_finished_semaphore(self.current_frame)];
 
-        self.frame_sync_objects
-            .wait_for_fence(logical_device, self.current_frame)?;
+        self.frame_sync_objects.wait_for_fence(device, self.current_frame)?;
 
         let image_index = match swapchain.acquire_next_image(wait_semaphores[0]) {
             Ok((image_index, _)) => image_index,
@@ -49,8 +43,7 @@ where
 
         let command_buffers = [self.logic.command_buffer(image_index as usize)];
 
-        self.frame_sync_objects
-            .reset_fences(logical_device, self.current_frame)?;
+        self.frame_sync_objects.reset_fences(device, self.current_frame)?;
 
         let submit_infos = [vk::SubmitInfo::builder()
             .wait_semaphores(&wait_semaphores)
@@ -59,45 +52,34 @@ where
             .signal_semaphores(&signal_semaphores)
             .build()];
         unsafe {
-            logical_device
+            device
                 .handle()
-                .queue_submit(logical_device.queues().graphics_queue, &submit_infos, wait_fence)?;
+                .queue_submit(device.queues().graphics_queue, &submit_infos, wait_fence)?;
         };
 
-        let was_resized = swapchain.present_image(logical_device, &signal_semaphores, image_index)?;
+        let was_resized = swapchain.present_image(device, &signal_semaphores, image_index)?;
 
         self.current_frame = self.frame_sync_objects.next_frame(self.current_frame);
 
         Ok(was_resized)
     }
 
-    pub fn recreate_logic(
-        &mut self,
-        logical_device: &LogicalDevice,
-        command_pool: &CommandPool,
-        swapchain: &Swapchain,
-    ) -> Result<()> {
-        self.logic.recreate_frame_buffers(logical_device, swapchain)?;
-        self.logic
-            .recreate_command_buffers(logical_device, command_pool, swapchain)
-    }
-
-    pub unsafe fn destroy(&self, logical_device: &LogicalDevice, command_pool: &CommandPool) {
-        self.logic.destroy(logical_device, command_pool);
-        self.frame_sync_objects.destroy(logical_device);
+    pub fn recreate_logic(&mut self, device: &Device, command_pool: &CommandPool, swapchain: &Swapchain) -> Result<()> {
+        self.logic.recreate_frame_buffers(device, swapchain)?;
+        self.logic.recreate_command_buffers(device, command_pool, swapchain)
     }
 }
 
 pub trait FrameLogic {
-    fn recreate_frame_buffers(&mut self, logical_device: &LogicalDevice, swapchain: &Swapchain) -> Result<()>;
+    fn recreate_frame_buffers(&mut self, device: &Device, swapchain: &Swapchain) -> Result<()>;
     fn recreate_command_buffers(
         &mut self,
-        logical_device: &LogicalDevice,
+        device: &Device,
         command_pool: &CommandPool,
         swapchain: &Swapchain,
     ) -> Result<()>;
     fn command_buffer(&self, image_index: usize) -> vk::CommandBuffer;
-    unsafe fn destroy(&self, logical_device: &LogicalDevice, command_pool: &CommandPool);
+    unsafe fn destroy(&self, device: &Device, command_pool: &CommandPool);
 }
 
 pub struct FrameSyncObjects {
@@ -108,8 +90,8 @@ pub struct FrameSyncObjects {
 }
 
 impl FrameSyncObjects {
-    pub fn new(logical_device: &LogicalDevice, max_frames_in_flight: usize) -> Result<Self> {
-        let device = logical_device.handle();
+    pub fn new(device: &Device, max_frames_in_flight: usize) -> Result<Self> {
+        let device = device.handle();
 
         let mut result = Self {
             max_frames_in_flight,
@@ -141,15 +123,30 @@ impl FrameSyncObjects {
         Ok(result)
     }
 
-    pub fn wait_for_fence(&self, logical_device: &LogicalDevice, frame: usize) -> Result<()> {
+    pub unsafe fn destroy(&self, device: &Device) {
+        let device = device.handle();
+
+        for i in 0..self.max_frames_in_flight {
+            device.destroy_semaphore(self.image_available_semaphores[i], None);
+            log::debug!("dropped semaphore {:?}", self.image_available_semaphores[i]);
+
+            device.destroy_semaphore(self.render_finished_semaphores[i], None);
+            log::debug!("dropped semaphore {:?}", self.render_finished_semaphores[i]);
+
+            device.destroy_fence(self.inflight_fences[i], None);
+            log::debug!("dropped fence {:?}", self.inflight_fences[i]);
+        }
+    }
+
+    pub fn wait_for_fence(&self, device: &Device, frame: usize) -> Result<()> {
         let fences = [self.inflight_fences[frame]];
-        unsafe { logical_device.handle().wait_for_fences(&fences, true, std::u64::MAX)? }
+        unsafe { device.handle().wait_for_fences(&fences, true, std::u64::MAX)? }
         Ok(())
     }
 
-    pub fn reset_fences(&self, logical_device: &LogicalDevice, frame: usize) -> Result<()> {
+    pub fn reset_fences(&self, device: &Device, frame: usize) -> Result<()> {
         let fences = [self.inflight_fences[frame]];
-        unsafe { logical_device.handle().reset_fences(&fences)? };
+        unsafe { device.handle().reset_fences(&fences)? };
         Ok(())
     }
 
@@ -172,21 +169,6 @@ impl FrameSyncObjects {
     pub fn next_frame(&self, frame: usize) -> usize {
         (frame + 1) % self.max_frames_in_flight
     }
-
-    pub unsafe fn destroy(&self, logical_device: &LogicalDevice) {
-        let device = logical_device.handle();
-
-        for i in 0..self.max_frames_in_flight {
-            device.destroy_semaphore(self.image_available_semaphores[i], None);
-            log::debug!("dropped semaphore {:?}", self.image_available_semaphores[i]);
-
-            device.destroy_semaphore(self.render_finished_semaphores[i], None);
-            log::debug!("dropped semaphore {:?}", self.render_finished_semaphores[i]);
-
-            device.destroy_fence(self.inflight_fences[i], None);
-            log::debug!("dropped fence {:?}", self.inflight_fences[i]);
-        }
-    }
 }
 
 pub struct SimpleFrameLogic {
@@ -203,15 +185,15 @@ pub struct SimpleFrameLogic {
 
 impl SimpleFrameLogic {
     pub fn new(
-        logical_device: &LogicalDevice,
+        device: &Device,
         pipeline_cache: &PipelineCache,
         command_pool: &CommandPool,
         swapchain: &Swapchain,
     ) -> Result<Self> {
-        let simple_render_pass = SimpleRenderPass::new(logical_device, swapchain.format())?;
-        let pipeline_layout = SimplePipelineLayout::new(logical_device)?;
-        let vertex_shader_module = ShaderModule::from_file(logical_device, "shaders/spv/mesh.vert.spv")?;
-        let fragment_shader_module = ShaderModule::from_file(logical_device, "shaders/spv/mesh.frag.spv")?;
+        let simple_render_pass = SimpleRenderPass::new(device, swapchain.format())?;
+        let pipeline_layout = SimplePipelineLayout::new(device)?;
+        let vertex_shader_module = ShaderModule::from_file(device, "shaders/spv/mesh.vert.spv")?;
+        let fragment_shader_module = ShaderModule::from_file(device, "shaders/spv/mesh.frag.spv")?;
 
         let mut result = Self {
             simple_render_pass,
@@ -224,9 +206,9 @@ impl SimpleFrameLogic {
             meshes: Vec::new(),
         };
 
-        result.recreate_pipeline(logical_device, pipeline_cache)?;
-        result.recreate_frame_buffers(logical_device, swapchain)?;
-        result.recreate_command_buffers(logical_device, command_pool, swapchain)?;
+        result.recreate_pipeline(device, pipeline_cache)?;
+        result.recreate_frame_buffers(device, swapchain)?;
+        result.recreate_command_buffers(device, command_pool, swapchain)?;
 
         Ok(result)
     }
@@ -245,7 +227,7 @@ impl SimpleFrameLogic {
             .collect();
     }
 
-    pub fn recreate_pipeline(&mut self, logical_device: &LogicalDevice, pipeline_cache: &PipelineCache) -> Result<()> {
+    pub fn recreate_pipeline(&mut self, device: &Device, pipeline_cache: &PipelineCache) -> Result<()> {
         let main_function_name = shader::main_function_name();
 
         // shader stages
@@ -353,7 +335,7 @@ impl SimpleFrameLogic {
             .build()];
 
         let graphics_pipelines = unsafe {
-            logical_device
+            device
                 .handle()
                 .create_graphics_pipelines(pipeline_cache.handle(), &graphics_pipeline_create_infos, None)
                 .map_err(|(_, e)| e)?
@@ -362,7 +344,7 @@ impl SimpleFrameLogic {
         log::debug!("create graphics pipeline {:?}", graphics_pipeline);
 
         if self.graphics_pipeline != vk::Pipeline::null() {
-            unsafe { self.destroy_pipeline(logical_device) };
+            unsafe { self.destroy_pipeline(device) };
         }
 
         self.graphics_pipeline = graphics_pipeline;
@@ -370,35 +352,35 @@ impl SimpleFrameLogic {
         Ok(())
     }
 
-    unsafe fn destroy_pipeline(&self, logical_device: &LogicalDevice) {
-        logical_device.handle().destroy_pipeline(self.graphics_pipeline, None);
+    unsafe fn destroy_pipeline(&self, device: &Device) {
+        device.handle().destroy_pipeline(self.graphics_pipeline, None);
         log::debug!("dropped pipeline {:?}", self.graphics_pipeline);
     }
 
-    unsafe fn destroy_framebuffers(&self, logical_device: &LogicalDevice) {
-        self.framebuffers.iter().for_each(|item| item.destroy(logical_device));
+    unsafe fn destroy_framebuffers(&self, device: &Device) {
+        self.framebuffers.iter().for_each(|item| item.destroy(device));
     }
 
-    unsafe fn free_command_buffers(&self, logical_device: &LogicalDevice, command_pool: &CommandPool) {
-        logical_device
+    unsafe fn free_command_buffers(&self, device: &Device, command_pool: &CommandPool) {
+        device
             .handle()
             .free_command_buffers(command_pool.handle(), &self.command_buffers);
     }
 }
 
 impl FrameLogic for SimpleFrameLogic {
-    fn recreate_frame_buffers(&mut self, logical_device: &LogicalDevice, swapchain: &Swapchain) -> Result<()> {
+    fn recreate_frame_buffers(&mut self, device: &Device, swapchain: &Swapchain) -> Result<()> {
         // destroy framebuffers
-        unsafe { self.destroy_framebuffers(logical_device) };
+        unsafe { self.destroy_framebuffers(device) };
 
         // create framebuffers
         self.framebuffers = swapchain.image_views().iter().try_fold(
             Vec::with_capacity(swapchain.image_views().len()),
             |mut framebuffers, &image_view| {
                 Framebuffer::new(
-                    logical_device,
+                    device,
                     self.simple_render_pass.handle(),
-                    image_view,
+                    &[image_view],
                     swapchain.extent(),
                 )
                 .map(|framebuffer| {
@@ -414,17 +396,17 @@ impl FrameLogic for SimpleFrameLogic {
 
     fn recreate_command_buffers(
         &mut self,
-        logical_device: &LogicalDevice,
+        device: &Device,
         command_pool: &CommandPool,
         swapchain: &Swapchain,
     ) -> Result<()> {
         // free command buffers
-        unsafe { self.free_command_buffers(logical_device, command_pool) };
+        unsafe { self.free_command_buffers(device, command_pool) };
 
         let extent = swapchain.extent();
 
         // create command buffers
-        let device = logical_device.handle();
+        let device = device.handle();
 
         let command_buffer_create_info = vk::CommandBufferAllocateInfo::builder()
             .command_pool(command_pool.handle())
@@ -485,14 +467,14 @@ impl FrameLogic for SimpleFrameLogic {
         self.command_buffers[image_index]
     }
 
-    unsafe fn destroy(&self, logical_device: &LogicalDevice, command_pool: &CommandPool) {
-        self.free_command_buffers(logical_device, command_pool);
-        self.destroy_framebuffers(logical_device);
-        self.destroy_pipeline(logical_device);
-        self.simple_render_pass.destroy(logical_device);
-        self.pipeline_layout.destroy(logical_device);
-        self.vertex_shader_module.destroy(logical_device);
-        self.fragment_shader_module.destroy(logical_device);
+    unsafe fn destroy(&self, device: &Device, command_pool: &CommandPool) {
+        self.free_command_buffers(device, command_pool);
+        self.destroy_framebuffers(device);
+        self.destroy_pipeline(device);
+        self.simple_render_pass.destroy(device);
+        self.pipeline_layout.destroy(device);
+        self.vertex_shader_module.destroy(device);
+        self.fragment_shader_module.destroy(device);
     }
 }
 
@@ -501,7 +483,7 @@ pub struct SimpleRenderPass {
 }
 
 impl SimpleRenderPass {
-    fn new(logical_device: &LogicalDevice, surface_format: vk::Format) -> Result<Self> {
+    fn new(device: &Device, surface_format: vk::Format) -> Result<Self> {
         // subpasses
         let color_attachment_ref = [vk::AttachmentReference::builder()
             .attachment(0)
@@ -529,24 +511,20 @@ impl SimpleRenderPass {
             .subpasses(&subpasses)
             .attachments(&render_pass_attachments);
 
-        let render_pass = unsafe {
-            logical_device
-                .handle()
-                .create_render_pass(&render_pass_create_info, None)?
-        };
+        let render_pass = unsafe { device.handle().create_render_pass(&render_pass_create_info, None)? };
         log::debug!("created render pass {:?}", render_pass);
 
         Ok(Self { render_pass })
     }
 
+    unsafe fn destroy(&self, device: &Device) {
+        device.handle().destroy_render_pass(self.render_pass, None);
+        log::debug!("dropped render pass {:?}", self.render_pass);
+    }
+
     #[inline]
     fn handle(&self) -> vk::RenderPass {
         self.render_pass
-    }
-
-    unsafe fn destroy(&self, logical_device: &LogicalDevice) {
-        logical_device.handle().destroy_render_pass(self.render_pass, None);
-        log::debug!("dropped render pass {:?}", self.render_pass);
     }
 }
 
@@ -555,11 +533,11 @@ struct SimplePipelineLayout {
 }
 
 impl SimplePipelineLayout {
-    fn new(logical_device: &LogicalDevice) -> Result<Self> {
+    fn new(device: &Device) -> Result<Self> {
         let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::builder();
 
         let pipeline_layout = unsafe {
-            logical_device
+            device
                 .handle()
                 .create_pipeline_layout(&pipeline_layout_create_info, None)?
         };
@@ -568,15 +546,13 @@ impl SimplePipelineLayout {
         Ok(Self { pipeline_layout })
     }
 
+    unsafe fn destroy(&self, device: &Device) {
+        device.handle().destroy_pipeline_layout(self.pipeline_layout, None);
+        log::debug!("dropped pipeline layout {:?}", self.pipeline_layout);
+    }
+
     #[inline]
     fn handle(&self) -> vk::PipelineLayout {
         self.pipeline_layout
-    }
-
-    unsafe fn destroy(&self, logical_device: &LogicalDevice) {
-        logical_device
-            .handle()
-            .destroy_pipeline_layout(self.pipeline_layout, None);
-        log::debug!("dropped pipeline layout {:?}", self.pipeline_layout);
     }
 }

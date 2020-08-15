@@ -1,27 +1,18 @@
-use std::collections::HashSet;
+use super::prelude::*;
+use super::{utils, validation, Instance, Surface};
 
-use anyhow::{Error, Result};
-use ash::version::{DeviceV1_0, InstanceV1_0};
-use ash::vk;
-
-use crate::instance::Instance;
-use crate::surface::Surface;
-use crate::utils;
-use crate::validation;
-
-pub struct LogicalDevice {
+pub struct Device {
     device: ash::Device,
     physical_device: vk::PhysicalDevice,
     memory_properties: vk::PhysicalDeviceMemoryProperties,
     queues: Queues,
 }
 
-impl LogicalDevice {
+impl Device {
     pub fn new(instance: &Instance, surface: &Surface, is_validation_enabled: bool) -> Result<Self> {
         let (physical_device, queue_indices) = pick_physical_device(instance.handle(), surface)?;
         let memory_properties = unsafe { instance.handle().get_physical_device_memory_properties(physical_device) };
-        let (device, queues) =
-            create_logical_device(instance.handle(), physical_device, queue_indices, is_validation_enabled)?;
+        let (device, queues) = create_device(instance.handle(), physical_device, queue_indices, is_validation_enabled)?;
         log::debug!("created logical device");
 
         Ok(Self {
@@ -32,9 +23,28 @@ impl LogicalDevice {
         })
     }
 
-    #[allow(unused)]
+    pub unsafe fn destroy(&self) {
+        self.device.destroy_device(None);
+        log::debug!("dropped logical device");
+    }
+
+    pub fn get_buffer_memory_requirements(&self, buffer: vk::Buffer) -> vk::MemoryRequirements {
+        unsafe { self.device.get_buffer_memory_requirements(buffer) }
+    }
+
+    pub fn query_swapchain_support(&self, surface: &Surface) -> Result<SwapchainSupportInfo> {
+        query_swapchain_support(surface, self.physical_device)
+    }
+
+    pub fn wait_idle(&self) -> Result<()> {
+        unsafe {
+            self.device.device_wait_idle()?;
+        }
+        Ok(())
+    }
+
     #[inline]
-    pub fn physical_device(&self) -> vk::PhysicalDevice {
+    pub fn physical(&self) -> vk::PhysicalDevice {
         self.physical_device
     }
 
@@ -49,30 +59,8 @@ impl LogicalDevice {
     }
 
     #[inline]
-    pub fn get_buffer_memory_requirements(&self, buffer: vk::Buffer) -> vk::MemoryRequirements {
-        unsafe { self.device.get_buffer_memory_requirements(buffer) }
-    }
-
-    #[allow(unused)]
-    #[inline]
     pub fn queues(&self) -> &Queues {
         &self.queues
-    }
-
-    pub fn query_swapchain_support(&self, surface: &Surface) -> Result<SwapchainSupportInfo> {
-        query_swapchain_support(surface, self.physical_device)
-    }
-
-    pub fn wait_idle(&self) -> Result<()> {
-        unsafe {
-            self.device.device_wait_idle()?;
-        }
-        Ok(())
-    }
-
-    pub unsafe fn destroy(&self) {
-        self.device.destroy_device(None);
-        log::debug!("dropped logical device");
     }
 }
 
@@ -133,7 +121,7 @@ impl Queues {
     }
 }
 
-fn create_logical_device(
+fn create_device(
     instance: &ash::Instance,
     physical_device: vk::PhysicalDevice,
     queue_indices: QueueFamilyIndices,

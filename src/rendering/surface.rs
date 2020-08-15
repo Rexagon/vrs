@@ -1,7 +1,5 @@
-use anyhow::Result;
-use ash::vk;
-
-use crate::instance::Instance;
+use super::prelude::*;
+use super::Instance;
 
 pub struct Surface {
     surface_ext: ash::extensions::khr::Surface,
@@ -17,9 +15,9 @@ impl Surface {
         Ok(Self { surface_ext, surface })
     }
 
-    #[inline]
-    pub fn ext(&self) -> &ash::extensions::khr::Surface {
-        &self.surface_ext
+    pub unsafe fn destroy(&self) {
+        self.surface_ext.destroy_surface(self.surface, None);
+        log::debug!("dropped surface");
     }
 
     #[inline]
@@ -27,8 +25,8 @@ impl Surface {
         self.surface
     }
 
-    pub unsafe fn destroy(&self) {
-        self.surface_ext.destroy_surface(self.surface, None);
-        log::debug!("dropped surface");
+    #[inline]
+    pub fn ext(&self) -> &ash::extensions::khr::Surface {
+        &self.surface_ext
     }
 }

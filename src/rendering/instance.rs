@@ -1,11 +1,5 @@
-use std::ffi::{CStr, CString};
-
-use anyhow::Result;
-use ash::version::{EntryV1_0, InstanceV1_0};
-use ash::vk;
-use winit::window::Window;
-
-use crate::validation;
+use super::prelude::*;
+use super::validation;
 
 pub const APPLICATION_NAME: &str = "vrs";
 pub const ENGINE_TITLE: &str = "ash";
@@ -75,13 +69,13 @@ impl Instance {
         Ok(Self { instance })
     }
 
-    #[inline]
-    pub fn handle(&self) -> &ash::Instance {
-        &self.instance
-    }
-
     pub unsafe fn destroy(&self) {
         self.instance.destroy_instance(None);
         log::debug!("dropped instance");
+    }
+
+    #[inline]
+    pub fn handle(&self) -> &ash::Instance {
+        &self.instance
     }
 }

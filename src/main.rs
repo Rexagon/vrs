@@ -3,41 +3,22 @@
 #[macro_use]
 extern crate memoffset;
 
-mod command_buffer;
-mod frame;
-mod framebuffer;
-mod instance;
-mod logical_device;
-mod mesh;
-mod pipeline;
-mod shader;
-mod surface;
-mod swapchain;
-mod utils;
-mod validation;
+mod rendering;
 
 extern crate nalgebra_glm as glm;
 
 use anyhow::Result;
+use rendering::frame::SimpleFrameLogic;
+use rendering::*;
 use winit::dpi::LogicalSize;
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 
-use crate::command_buffer::CommandPool;
-use crate::frame::{Frame, FrameLogic, SimpleFrameLogic};
-use crate::instance::Instance;
-use crate::logical_device::LogicalDevice;
-use crate::mesh::Mesh;
-use crate::pipeline::PipelineCache;
-use crate::surface::Surface;
-use crate::swapchain::Swapchain;
-use crate::validation::Validation;
-
 const IS_VALIDATION_ENABLED: bool = true;
 
 struct App {
-    logical_device: LogicalDevice,
+    device: Device,
     surface: Surface,
     validation: Validation,
     instance: Instance,
@@ -61,29 +42,29 @@ impl App {
         let instance = Instance::new(&entry, &window, IS_VALIDATION_ENABLED)?;
         let validation = Validation::new(&entry, &instance, IS_VALIDATION_ENABLED)?;
         let surface = Surface::new(&entry, &instance, &window)?;
-        let logical_device = LogicalDevice::new(&instance, &surface, IS_VALIDATION_ENABLED)?;
-        let swapchain = Swapchain::new(&instance, &surface, &logical_device, &window)?;
-        let pipeline_cache = PipelineCache::new(&logical_device)?;
-        let command_pool = CommandPool::new(&logical_device)?;
+        let device = Device::new(&instance, &surface, IS_VALIDATION_ENABLED)?;
+        let swapchain = Swapchain::new(&instance, &surface, &device, &window)?;
+        let pipeline_cache = PipelineCache::new(&device)?;
+        let command_pool = CommandPool::new(&device)?;
 
         let meshes = vec![Mesh::new(
-            &logical_device,
+            &device,
             &command_pool,
             &mesh::QUAD_VERTICES,
             &mesh::QUAD_INDICES,
         )?];
 
-        let mut frame_logic = SimpleFrameLogic::new(&logical_device, &pipeline_cache, &command_pool, &swapchain)?;
+        let mut frame_logic = SimpleFrameLogic::new(&device, &pipeline_cache, &command_pool, &swapchain)?;
         frame_logic.update_meshes(&meshes);
-        frame_logic.recreate_command_buffers(&logical_device, &command_pool, &swapchain)?;
+        frame_logic.recreate_command_buffers(&device, &command_pool, &swapchain)?;
 
-        let frame = Frame::new(&logical_device, frame_logic)?;
+        let frame = Frame::new(&device, frame_logic)?;
 
         Ok((
             event_loop,
             window,
             Self {
-                logical_device,
+                device,
                 validation,
                 surface,
                 instance,
@@ -112,15 +93,15 @@ impl App {
             return Ok(());
         }
 
-        let was_resized = self.frame.draw(&self.logical_device, &self.swapchain)?;
+        let was_resized = self.frame.draw(&self.device, &self.swapchain)?;
         if was_resized {
-            self.logical_device.wait_idle()?;
+            self.device.wait_idle()?;
             unsafe {
-                self.swapchain.destroy(&self.logical_device);
+                self.swapchain.destroy(&self.device);
             }
-            self.swapchain = Swapchain::new(&self.instance, &self.surface, &self.logical_device, window)?;
+            self.swapchain = Swapchain::new(&self.instance, &self.surface, &self.device, window)?;
             self.frame
-                .recreate_logic(&self.logical_device, &self.command_pool, &self.swapchain)?;
+                .recreate_logic(&self.device, &self.command_pool, &self.swapchain)?;
         }
 
         Ok(())
@@ -141,7 +122,7 @@ impl App {
                 }
             }
             Event::LoopDestroyed => {
-                if let Err(e) = self.logical_device.wait_idle() {
+                if let Err(e) = self.device.wait_idle() {
                     log::error!("failed to wait device idle: {:?}", e);
                 }
             }
@@ -153,12 +134,12 @@ impl App {
 impl Drop for App {
     fn drop(&mut self) {
         unsafe {
-            self.frame.destroy(&self.logical_device, &self.command_pool);
-            self.meshes.iter().for_each(|mesh| mesh.destroy(&self.logical_device));
-            self.command_pool.destroy(&self.logical_device);
-            self.pipeline_cache.destroy(&self.logical_device);
-            self.swapchain.destroy(&self.logical_device);
-            self.logical_device.destroy();
+            self.frame.destroy(&self.device, &self.command_pool);
+            self.meshes.iter().for_each(|mesh| mesh.destroy(&self.device));
+            self.command_pool.destroy(&self.device);
+            self.pipeline_cache.destroy(&self.device);
+            self.swapchain.destroy(&self.device);
+            self.device.destroy();
             self.surface.destroy();
             self.validation.destroy();
             self.instance.destroy();

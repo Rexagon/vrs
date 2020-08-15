@@ -1,9 +1,5 @@
-use anyhow::{Error, Result};
-use ash::version::DeviceV1_0;
-use ash::vk;
-
-use crate::command_buffer::CommandPool;
-use crate::logical_device::LogicalDevice;
+use super::prelude::*;
+use super::{CommandPool, Device};
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -49,21 +45,14 @@ pub struct Mesh {
 }
 
 impl Mesh {
-    pub fn new(
-        logical_device: &LogicalDevice,
-        command_pool: &CommandPool,
-        vertices: &[Vertex],
-        indices: &[u16],
-    ) -> Result<Self> {
-        let device = logical_device.handle();
-
+    pub fn new(device: &Device, command_pool: &CommandPool, vertices: &[Vertex], indices: &[u16]) -> Result<Self> {
         let vertex_buffer_size = std::mem::size_of_val(vertices) as vk::DeviceSize;
         let index_buffer_size = std::mem::size_of_val(indices) as vk::DeviceSize;
         let staging_buffer_size = vertex_buffer_size + index_buffer_size;
 
         // create staging buffer
         let staging_buffer = Buffer::new(
-            logical_device,
+            device,
             staging_buffer_size,
             vk::BufferUsageFlags::TRANSFER_SRC,
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
@@ -71,7 +60,7 @@ impl Mesh {
 
         // write data to staging buffer
         unsafe {
-            let data_ptr = device.map_memory(
+            let data_ptr = device.handle().map_memory(
                 staging_buffer.memory(),
                 0,
                 staging_buffer_size,
@@ -90,12 +79,12 @@ impl Mesh {
 
             assert_eq!(staging_buffer_size as usize, vertices_data.len() + indices_data.len());
 
-            device.unmap_memory(staging_buffer.memory);
+            device.handle().unmap_memory(staging_buffer.memory);
         }
 
         // create vertex buffer
         let vertex_buffer = Buffer::new(
-            logical_device,
+            device,
             vertex_buffer_size,
             vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::VERTEX_BUFFER,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
@@ -103,7 +92,7 @@ impl Mesh {
 
         // create index buffer
         let index_buffer = Buffer::new(
-            logical_device,
+            device,
             index_buffer_size,
             vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::INDEX_BUFFER,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
@@ -115,19 +104,19 @@ impl Mesh {
             .command_buffer_count(1)
             .level(vk::CommandBufferLevel::PRIMARY);
 
-        let command_buffers = unsafe { device.allocate_command_buffers(&allocate_info)? };
+        let command_buffers = unsafe { device.handle().allocate_command_buffers(&allocate_info)? };
         let command_buffer = command_buffers[0];
 
         unsafe {
             let begin_info = vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-            device.begin_command_buffer(command_buffer, &begin_info)?;
+            device.handle().begin_command_buffer(command_buffer, &begin_info)?;
 
             let copy_regions = [vk::BufferCopy {
                 src_offset: 0,
                 dst_offset: 0,
                 size: vertex_buffer_size,
             }];
-            device.cmd_copy_buffer(
+            device.handle().cmd_copy_buffer(
                 command_buffer,
                 staging_buffer.handle(),
                 vertex_buffer.handle(),
@@ -139,30 +128,34 @@ impl Mesh {
                 dst_offset: 0,
                 size: index_buffer_size,
             }];
-            device.cmd_copy_buffer(
+            device.handle().cmd_copy_buffer(
                 command_buffer,
                 staging_buffer.handle(),
                 index_buffer.handle(),
                 &copy_regions,
             );
 
-            device.end_command_buffer(command_buffer)?;
+            device.handle().end_command_buffer(command_buffer)?;
         }
 
         let submit_info = [vk::SubmitInfo::builder().command_buffers(&command_buffers).build()];
 
         unsafe {
-            device.queue_submit(logical_device.queues().graphics_queue, &submit_info, vk::Fence::null())?;
+            device
+                .handle()
+                .queue_submit(device.queues().graphics_queue, &submit_info, vk::Fence::null())?;
         }
 
-        logical_device.wait_idle()?;
+        device.wait_idle()?;
 
         unsafe {
-            device.free_command_buffers(command_pool.handle(), &command_buffers);
+            device
+                .handle()
+                .free_command_buffers(command_pool.handle(), &command_buffers);
         }
 
         // destroy staging buffer
-        unsafe { staging_buffer.destroy(logical_device) };
+        unsafe { staging_buffer.destroy(device) };
 
         // done
         let index_count = indices.len() as u32;
@@ -174,9 +167,9 @@ impl Mesh {
         })
     }
 
-    pub unsafe fn destroy(&self, logical_device: &LogicalDevice) {
-        self.vertex_buffer.destroy(logical_device);
-        self.index_buffer.destroy(logical_device);
+    pub unsafe fn destroy(&self, device: &Device) {
+        self.vertex_buffer.destroy(device);
+        self.index_buffer.destroy(device);
     }
 
     #[inline]
@@ -202,27 +195,25 @@ pub struct Buffer {
 
 impl Buffer {
     pub fn new(
-        logical_device: &LogicalDevice,
+        device: &Device,
         size: vk::DeviceSize,
         usage: vk::BufferUsageFlags,
         required_properties: vk::MemoryPropertyFlags,
     ) -> Result<Self> {
-        let device = logical_device.handle();
-
         // create buffer
         let buffer_create_info = vk::BufferCreateInfo::builder()
             .size(size)
             .usage(usage)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
-        let buffer = unsafe { device.create_buffer(&buffer_create_info, None)? };
+        let buffer = unsafe { device.handle().create_buffer(&buffer_create_info, None)? };
         log::debug!("created buffer {:?}", buffer);
 
         // find memory type
-        let memory_requirements = logical_device.get_buffer_memory_requirements(buffer);
+        let memory_requirements = device.get_buffer_memory_requirements(buffer);
 
         let memory_type = find_memory_type(
-            logical_device.memory_properties(),
+            device.memory_properties(),
             required_properties,
             memory_requirements.memory_type_bits,
         )?;
@@ -232,18 +223,18 @@ impl Buffer {
             .allocation_size(memory_requirements.size)
             .memory_type_index(memory_type);
 
-        let memory = unsafe { device.allocate_memory(&allocate_info, None)? };
+        let memory = unsafe { device.handle().allocate_memory(&allocate_info, None)? };
         log::debug!("allocated buffer memory {:?}", memory);
 
         // bind buffer memory
-        unsafe { device.bind_buffer_memory(buffer, memory, 0)? };
+        unsafe { device.handle().bind_buffer_memory(buffer, memory, 0)? };
 
         // done
         Ok(Self { buffer, memory })
     }
 
-    pub unsafe fn destroy(&self, logical_device: &LogicalDevice) {
-        let device = logical_device.handle();
+    pub unsafe fn destroy(&self, device: &Device) {
+        let device = device.handle();
 
         device.destroy_buffer(self.buffer, None);
         log::debug!("dropped buffer {:?}", self.buffer);

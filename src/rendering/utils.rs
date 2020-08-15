@@ -1,9 +1,4 @@
-use std::ffi::{CStr, CString};
-use std::os::raw::c_char;
-use std::path::Path;
-
-use anyhow::Result;
-use ash::vk;
+use super::prelude::*;
 
 #[allow(unused)]
 pub fn from_vk_string_raw(raw_string_array: &[c_char]) -> &CStr {
