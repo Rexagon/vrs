@@ -6,6 +6,7 @@ extern crate memoffset;
 mod camera;
 mod input;
 mod rendering;
+mod scene;
 
 extern crate nalgebra_glm as glm;
 
@@ -13,14 +14,15 @@ use std::time::Instant;
 
 use anyhow::Result;
 use rendering::*;
-use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition, Position};
-use winit::event::{Event, VirtualKeyCode, WindowEvent};
+use winit::dpi::LogicalSize;
+use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 
 use crate::camera::{Camera, FirstPersonController};
 use crate::input::{InputState, InputStateHandler};
 use crate::rendering::frame::SimpleFrameLogic;
+use crate::scene::Scene;
 
 const IS_VALIDATION_ENABLED: bool = true;
 
@@ -33,7 +35,7 @@ struct App {
     pipeline_cache: PipelineCache,
     command_pool: CommandPool,
 
-    meshes: Vec<Mesh>,
+    scene: Scene,
     frame: Frame<SimpleFrameLogic>,
 
     now: Instant,
@@ -61,22 +63,17 @@ impl App {
         let pipeline_cache = PipelineCache::new(&device)?;
         let command_pool = CommandPool::new(&device)?;
 
-        let meshes = vec![Mesh::new(
-            &device,
-            &command_pool,
-            &mesh::QUAD_VERTICES,
-            &mesh::QUAD_INDICES,
-        )?];
+        let scene = Scene::new(&device, &command_pool, "./models/monkey.glb")?;
 
         let frame_logic = SimpleFrameLogic::new(&device, &pipeline_cache, &command_pool, &swapchain)?;
         let mut frame = Frame::new(&device, &swapchain, frame_logic)?;
-        frame.logic_mut().update_meshes(&meshes);
+        frame.logic_mut().update_meshes(scene.meshes());
         frame
             .logic_mut()
             .recreate_command_buffers(&device, &command_pool, &swapchain)?;
 
         let now = Instant::now();
-        let mut input_state = InputState::new();
+        let input_state = InputState::new();
         let input_state_handler = InputStateHandler::new();
         let camera = Camera::new(window.inner_size());
         let camera_controller = FirstPersonController::new(camera, glm::vec3(0.0, 0.0, 1.0));
@@ -92,7 +89,7 @@ impl App {
                 swapchain,
                 pipeline_cache,
                 command_pool,
-                meshes,
+                scene,
                 frame,
                 now,
                 input_state,
@@ -209,7 +206,7 @@ impl Drop for App {
     fn drop(&mut self) {
         unsafe {
             self.frame.destroy(&self.device, &self.command_pool);
-            self.meshes.iter().for_each(|mesh| mesh.destroy(&self.device));
+            self.scene.destroy(&self.device);
             self.command_pool.destroy(&self.device);
             self.pipeline_cache.destroy(&self.device);
             self.swapchain.destroy(&self.device);

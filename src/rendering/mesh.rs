@@ -5,7 +5,7 @@ use super::{Buffer, CommandPool, Device};
 #[derive(Debug, Clone, Copy)]
 pub struct Vertex {
     pub position: [f32; 3],
-    pub color: [f32; 3],
+    pub normal: [f32; 3],
 }
 
 unsafe impl bytemuck::Pod for Vertex {}
@@ -32,7 +32,7 @@ impl Vertex {
                 location: 1,
                 binding: 0,
                 format: vk::Format::R32G32B32_SFLOAT,
-                offset: offset_of!(Self, color) as u32,
+                offset: offset_of!(Self, normal) as u32,
             },
         ]
     }
@@ -188,23 +188,25 @@ impl Mesh {
     }
 }
 
+#[allow(unused)]
 pub const QUAD_VERTICES: [Vertex; 4] = [
     Vertex {
         position: [0.0, 0.0, 0.0],
-        color: [1.0, 0.0, 0.0],
+        normal: [1.0, 0.0, 0.0],
     },
     Vertex {
         position: [1.0, 0.0, 0.0],
-        color: [0.0, 1.0, 0.0],
+        normal: [0.0, 1.0, 0.0],
     },
     Vertex {
         position: [1.0, 1.0, 0.0],
-        color: [0.0, 0.0, 1.0],
+        normal: [0.0, 0.0, 1.0],
     },
     Vertex {
         position: [0.0, 1.0, 0.0],
-        color: [0.5, 0.5, 0.0],
+        normal: [0.5, 0.5, 0.0],
     },
 ];
 
+#[allow(unused)]
 pub const QUAD_INDICES: [u16; 6] = [0, 1, 2, 2, 3, 0];

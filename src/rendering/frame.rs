@@ -264,7 +264,7 @@ impl SimpleFrameLogic {
 
         // rasterization state
         let rasterization_state_create_info = vk::PipelineRasterizationStateCreateInfo::builder()
-            .cull_mode(vk::CullModeFlags::empty())
+            .cull_mode(vk::CullModeFlags::BACK)
             .front_face(vk::FrontFace::CLOCKWISE)
             .line_width(1.0)
             .polygon_mode(vk::PolygonMode::FILL);
@@ -278,17 +278,17 @@ impl SimpleFrameLogic {
             .fail_op(vk::StencilOp::KEEP)
             .pass_op(vk::StencilOp::KEEP)
             .depth_fail_op(vk::StencilOp::KEEP)
-            .compare_op(vk::CompareOp::ALWAYS)
+            .compare_op(vk::CompareOp::LESS_OR_EQUAL)
             .compare_mask(0)
             .write_mask(0)
             .reference(0)
             .build();
 
         let depth_stencil_state_create_info = vk::PipelineDepthStencilStateCreateInfo::builder()
-            .depth_test_enable(false)
-            .depth_write_enable(false)
+            .depth_test_enable(true)
+            .depth_write_enable(true)
             .depth_compare_op(vk::CompareOp::LESS_OR_EQUAL)
-            .depth_bounds_test_enable(false)
+            .depth_bounds_test_enable(true)
             .stencil_test_enable(false)
             .front(stencil_state)
             .back(stencil_state);
