@@ -77,11 +77,9 @@ impl App {
 
         let now = Instant::now();
         let mut input_state = InputState::new();
-        let mut input_state_handler = InputStateHandler::new();
+        let input_state_handler = InputStateHandler::new();
         let camera = Camera::new(window.inner_size());
         let camera_controller = FirstPersonController::new(camera, glm::vec3(0.0, 0.0, 1.0));
-
-        reset_cursor_position(&window, &mut input_state);
 
         Ok((
             event_loop,
@@ -108,10 +106,11 @@ impl App {
 
     fn init_window(event_loop: &EventLoop<()>) -> Result<winit::window::Window> {
         let window = winit::window::WindowBuilder::new()
-            .with_inner_size(event_loop.primary_monitor().size())
-            .with_fullscreen(Some(winit::window::Fullscreen::Borderless(
-                event_loop.primary_monitor(),
-            )))
+            // .with_inner_size(event_loop.primary_monitor().size())
+            // .with_fullscreen(Some(winit::window::Fullscreen::Borderless(
+            //     event_loop.primary_monitor(),
+            // )))
+            .with_inner_size(LogicalSize::new(1024, 768))
             .build(event_loop)?;
 
         Ok(window)
@@ -126,9 +125,7 @@ impl App {
 
         self.input_state_handler.flush();
         self.input_state.update(&self.input_state_handler);
-        self.camera_controller.handle_movement(&self.input_state, dt);
-
-        reset_cursor_position(&window, &mut self.input_state);
+        self.camera_controller.handle_movement(window, &self.input_state, dt);
 
         if self
             .input_state
@@ -236,14 +233,4 @@ fn main() {
         log::error!("{}", e);
         std::process::exit(1);
     }
-}
-
-fn reset_cursor_position(window: &Window, input_state: &mut InputState) {
-    let window_size = window.inner_size();
-    let mouse_position = PhysicalPosition::new(window_size.width as i32 / 2, window_size.height as i32 / 2);
-    window.set_cursor_position(Position::Physical(mouse_position));
-    input_state.mouse_position_mut().set(PhysicalPosition::new(
-        window_size.width as f64 / 2.0,
-        window_size.height as f64 / 2.0,
-    ));
 }

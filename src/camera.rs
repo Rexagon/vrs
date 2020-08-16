@@ -1,7 +1,9 @@
-use winit::dpi::PhysicalSize;
-use winit::event::VirtualKeyCode;
+use winit::dpi::{PhysicalPosition, PhysicalSize, Position};
+use winit::event::{MouseButton, VirtualKeyCode};
 
 use crate::input::InputState;
+use once_cell::sync::OnceCell;
+use winit::window::Window;
 
 pub struct Camera {
     view: glm::Mat4,
@@ -46,6 +48,7 @@ pub struct FirstPersonController {
     pub camera: Camera,
     pub position: glm::Vec3,
     pub direction: glm::Vec3,
+    pub relative_mouse_position: Option<PhysicalPosition<f64>>,
 }
 
 impl FirstPersonController {
@@ -55,21 +58,44 @@ impl FirstPersonController {
             camera,
             position,
             direction: glm::vec3(0.0, 0.0, 1.0),
+            relative_mouse_position: None,
         }
     }
 
-    pub fn handle_movement(&mut self, input_state: &InputState, dt: f32) {
+    pub fn handle_movement(&mut self, window: &Window, input_state: &InputState, dt: f32) {
         let movement_speed = 10.0;
         let rotation_speed = 0.5;
 
         let mut direction = glm::vec3(0.0, 0.0, 0.0);
 
-        let mouse_delta = input_state.mouse_position().delta();
+        if self.relative_mouse_position.is_none() && input_state.mouse().is_pressed(MouseButton::Right) {
+            self.relative_mouse_position = Some(input_state.mouse_position().current());
+            window.set_cursor_visible(false);
+        } else if self.relative_mouse_position.is_some() && input_state.mouse().is_released(MouseButton::Right) {
+            self.relative_mouse_position = None;
+            window.set_cursor_visible(true);
+        }
 
-        self.direction = glm::rotate_y_vec3(&self.direction, -mouse_delta.x as f32 * rotation_speed * dt);
-        let right = glm::cross(&self.direction, &glm::vec3(0.0, 1.0, 0.0)).normalize();
-        self.direction =
-            glm::rotate_vec3(&self.direction, mouse_delta.y as f32 * rotation_speed * dt, &right).normalize();
+        let right = if let Some(initial_mouse_position) = self.relative_mouse_position {
+            let new_mouse_position = input_state.mouse_position().current();
+            let mouse_delta = PhysicalPosition::new(
+                new_mouse_position.x - initial_mouse_position.x,
+                new_mouse_position.y - initial_mouse_position.y,
+            );
+
+            let _ = window.set_cursor_position(Position::Physical(PhysicalPosition::new(
+                initial_mouse_position.x as i32,
+                initial_mouse_position.y as i32,
+            )));
+
+            self.direction = glm::rotate_y_vec3(&self.direction, -mouse_delta.x as f32 * rotation_speed * dt);
+            let right = glm::cross(&self.direction, direction_up()).normalize();
+            self.direction =
+                glm::rotate_vec3(&self.direction, mouse_delta.y as f32 * rotation_speed * dt, &right).normalize();
+            right
+        } else {
+            glm::cross(&self.direction, direction_up()).normalize()
+        };
 
         if input_state.keyboard().is_pressed(VirtualKeyCode::D) {
             direction += &right;
@@ -87,11 +113,7 @@ impl FirstPersonController {
             self.position += direction.normalize() * movement_speed * dt;
         }
 
-        let view = glm::look_at(
-            &self.position,
-            &(&self.position + &self.direction),
-            &glm::vec3(0.0, 1.0, 0.0),
-        );
+        let view = glm::look_at(&self.position, &(&self.position + &self.direction), direction_up());
 
         self.camera.set_view(view);
     }
@@ -106,3 +128,9 @@ impl FirstPersonController {
         &mut self.camera
     }
 }
+
+fn direction_up() -> &'static glm::Vec3 {
+    DIRECTION_UP.get_or_init(|| glm::vec3(0.0, 1.0, 0.0))
+}
+
+static DIRECTION_UP: OnceCell<glm::Vec3> = OnceCell::new();

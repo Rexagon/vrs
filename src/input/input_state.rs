@@ -39,11 +39,6 @@ impl InputState {
     pub fn mouse_position(&self) -> &MousePosition {
         &self.mouse_position
     }
-
-    #[inline]
-    pub fn mouse_position_mut(&mut self) -> &mut MousePosition {
-        &mut self.mouse_position
-    }
 }
 
 pub struct InputStateBuffers<T>
@@ -92,7 +87,7 @@ where
 
     #[inline]
     pub fn is_released(&self, key: T::Key) -> bool {
-        self.current.is_pressed(key)
+        !self.current.is_pressed(key)
     }
 
     #[inline]
@@ -130,24 +125,13 @@ impl MousePosition {
     }
 
     pub fn update(&mut self, handler: &MousePositionHandler) {
-        self.set(handler.state);
-    }
-
-    #[inline]
-    pub fn set(&mut self, position: PhysicalPosition<f64>) {
         self.previous = self.current;
-        self.current = position;
+        self.current = handler.state;
     }
 
     #[inline]
-    pub fn reset(&mut self, position: PhysicalPosition<f64>) {
-        self.previous = position;
-        self.current = position;
-    }
-
-    #[inline]
-    pub fn current(&self) -> &PhysicalPosition<f64> {
-        &self.current
+    pub fn current(&self) -> PhysicalPosition<f64> {
+        self.current
     }
 
     #[inline]
