@@ -264,7 +264,7 @@ impl SimpleFrameLogic {
 
         // rasterization state
         let rasterization_state_create_info = vk::PipelineRasterizationStateCreateInfo::builder()
-            .cull_mode(vk::CullModeFlags::BACK)
+            .cull_mode(vk::CullModeFlags::empty())
             .front_face(vk::FrontFace::CLOCKWISE)
             .line_width(1.0)
             .polygon_mode(vk::PolygonMode::FILL);
@@ -438,7 +438,7 @@ impl FrameLogic for SimpleFrameLogic {
 
         self.command_buffers = unsafe { device.allocate_command_buffers(&command_buffer_create_info)? };
 
-        let viewports = [utils::viewport(extent, 0.0, 1.0)];
+        let viewports = [utils::viewport_flipped(extent, 0.0, 1.0)];
         let scissors = [utils::rect_2d([0, 0], extent)];
 
         for (i, &command_buffer) in self.command_buffers.iter().enumerate() {
@@ -612,16 +612,6 @@ impl SimplePipelineLayout {
     }
 }
 
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct WorldData {
-    pub view: glm::Mat4,
-    pub projection: glm::Mat4,
-}
-
-unsafe impl bytemuck::Pod for WorldData {}
-unsafe impl bytemuck::Zeroable for WorldData {}
-
 pub struct UniformBuffers {
     descriptor_set_layout: vk::DescriptorSetLayout,
     world_data_buffers: Vec<Buffer>,
@@ -648,7 +638,7 @@ impl UniformBuffers {
         log::debug!("created descriptor set layout {:?}", descriptor_set_layout);
 
         // create buffers
-        let buffer_size = std::mem::size_of::<WorldData>() as vk::DeviceSize;
+        let buffer_size = (std::mem::size_of::<glm::Mat4>() * 2) as vk::DeviceSize;
 
         let world_data_buffers =
             (0..max_frames_in_flight).try_fold(Vec::with_capacity(max_frames_in_flight), |mut buffers, _| {
@@ -718,15 +708,21 @@ impl UniformBuffers {
         log::debug!("dropped descriptor set layout {:?}", self.descriptor_set_layout);
     }
 
-    pub fn update_world_data(&mut self, device: &Device, current_frame: usize, data: &WorldData) -> Result<()> {
+    pub fn update_world_data(
+        &mut self,
+        device: &Device,
+        current_frame: usize,
+        view: &glm::Mat4,
+        projection: &glm::Mat4,
+    ) -> Result<()> {
         let buffer = &self.world_data_buffers[current_frame];
 
         unsafe {
             let data_ptr = buffer.map_memory(device)?;
 
             let mut buffer_data = [0f32; 16 * 2];
-            buffer_data[..16].copy_from_slice(data.view.as_slice());
-            buffer_data[16..].copy_from_slice(data.projection.as_slice());
+            buffer_data[..16].copy_from_slice(view.as_slice());
+            buffer_data[16..].copy_from_slice(projection.as_slice());
             let buffer_data_slice = bytemuck::cast_slice(&buffer_data);
 
             data_ptr.copy_from_nonoverlapping(buffer_data_slice.as_ptr(), buffer_data_slice.len());

@@ -45,6 +45,18 @@ pub fn viewport(extent: vk::Extent2D, min_depth: f32, max_depth: f32) -> vk::Vie
 }
 
 #[allow(unused)]
+pub fn viewport_flipped(extent: vk::Extent2D, min_depth: f32, max_depth: f32) -> vk::Viewport {
+    vk::Viewport {
+        x: 0.0,
+        y: extent.height as f32,
+        width: extent.width as f32,
+        height: -(extent.height as f32),
+        min_depth,
+        max_depth,
+    }
+}
+
+#[allow(unused)]
 pub fn rect_2d(offset: [i32; 2], extent: vk::Extent2D) -> vk::Rect2D {
     vk::Rect2D {
         offset: vk::Offset2D {

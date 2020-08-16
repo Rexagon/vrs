@@ -9,6 +9,7 @@ anyhow = "1.0"
 ash = "0.31"
 ash-window = "0.5"
 bytemuck = "1"
+bit-set = "0.5"
 env_logger = "0.7"
 gltf = { version = "0.15", features = ["utils"] }
 log = "0.4"
