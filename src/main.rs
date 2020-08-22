@@ -15,8 +15,10 @@ use std::time::Instant;
 use anyhow::Result;
 use rendering::*;
 use winit::dpi::LogicalSize;
+use winit::event::VirtualKeyCode;
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
+use winit::monitor::MonitorHandle;
 use winit::window::Window;
 
 use crate::camera::{Camera, FirstPersonController};
@@ -27,6 +29,8 @@ use crate::scene::Scene;
 const IS_VALIDATION_ENABLED: bool = true;
 
 struct App {
+    primary_monitor: MonitorHandle,
+
     device: Device,
     surface: Surface,
     validation: Validation,
@@ -43,6 +47,7 @@ struct App {
     input_state_handler: InputStateHandler,
     camera_controller: FirstPersonController,
 
+    is_fullscreen: bool,
     is_running: bool,
 
     _entry: ash::Entry,
@@ -54,6 +59,8 @@ impl App {
 
         let event_loop = EventLoop::new();
         let window = Self::init_window(&event_loop)?;
+
+        let primary_monitor = event_loop.primary_monitor();
 
         let instance = Instance::new(&entry, &window, IS_VALIDATION_ENABLED)?;
         let validation = Validation::new(&entry, &instance, IS_VALIDATION_ENABLED)?;
@@ -82,6 +89,7 @@ impl App {
             event_loop,
             window,
             Self {
+                primary_monitor,
                 device,
                 validation,
                 surface,
@@ -95,6 +103,7 @@ impl App {
                 input_state,
                 input_state_handler,
                 camera_controller,
+                is_fullscreen: false,
                 is_running: true,
                 _entry: entry,
             },
@@ -103,10 +112,6 @@ impl App {
 
     fn init_window(event_loop: &EventLoop<()>) -> Result<winit::window::Window> {
         let window = winit::window::WindowBuilder::new()
-            // .with_inner_size(event_loop.primary_monitor().size())
-            // .with_fullscreen(Some(winit::window::Fullscreen::Borderless(
-            //     event_loop.primary_monitor(),
-            // )))
             .with_inner_size(LogicalSize::new(1024, 768))
             .build(event_loop)?;
 
@@ -124,17 +129,27 @@ impl App {
         self.input_state.update(&self.input_state_handler);
         self.camera_controller.handle_movement(window, &self.input_state, dt);
 
-        if self
-            .input_state
-            .keyboard()
-            .is_pressed(winit::event::VirtualKeyCode::Escape)
-        {
+        if self.input_state.keyboard().was_pressed(VirtualKeyCode::Escape) {
             self.is_running = false;
             return Ok(());
         }
 
         if window_size.width == 0 || window_size.height == 0 {
             return Ok(());
+        }
+
+        if self.input_state.keyboard().was_pressed(VirtualKeyCode::F) {
+            if self.is_fullscreen {
+                window.set_fullscreen(None);
+            } else {
+                //window.set_inner_size(self.primary_monitor.size());
+                window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(
+                    self.primary_monitor.clone(),
+                )));
+                window.set_always_on_top(false);
+            }
+
+            self.is_fullscreen = !self.is_fullscreen;
         }
 
         let current_frame = self.frame.current_frame();

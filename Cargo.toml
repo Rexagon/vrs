@@ -24,3 +24,4 @@ winit = "0.22"
 
 [profile.release]
 lto = true
+codegen-units = 1
