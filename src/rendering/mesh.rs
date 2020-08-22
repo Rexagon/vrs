@@ -61,7 +61,7 @@ impl Mesh {
         // write data to staging buffer
         unsafe {
             let data_ptr = device.handle().map_memory(
-                staging_buffer.memory(),
+                staging_buffer.memory().handle(),
                 0,
                 staging_buffer_size,
                 vk::MemoryMapFlags::empty(),
@@ -79,7 +79,7 @@ impl Mesh {
 
             assert_eq!(staging_buffer_size as usize, vertices_data.len() + indices_data.len());
 
-            device.handle().unmap_memory(staging_buffer.memory());
+            device.handle().unmap_memory(staging_buffer.memory().handle());
         }
 
         // create vertex buffer

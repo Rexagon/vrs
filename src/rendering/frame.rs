@@ -399,11 +399,11 @@ impl FrameLogic for SimpleFrameLogic {
         // create framebuffers
         self.framebuffers = swapchain.image_views().iter().try_fold(
             Vec::with_capacity(swapchain.image_views().len()),
-            |mut framebuffers, &image_view| {
+            |mut framebuffers, image_view| {
                 Framebuffer::new(
                     device,
                     self.simple_render_pass.handle(),
-                    &[image_view],
+                    &[image_view.handle()],
                     swapchain.extent(),
                 )
                 .map(|framebuffer| {

@@ -1,11 +1,11 @@
 use super::prelude::*;
-use super::{Device, Instance, Surface};
+use super::{Device, ImageView, Instance, Surface};
 
 pub struct Swapchain {
     swapchain_ext: ash::extensions::khr::Swapchain,
     swapchain: vk::SwapchainKHR,
     images: Vec<vk::Image>,
-    image_views: Vec<vk::ImageView>,
+    image_views: Vec<ImageView>,
     format: vk::Format,
     extent: vk::Extent2D,
 }
@@ -41,6 +41,7 @@ impl Swapchain {
             (vk::SharingMode::EXCLUSIVE, Vec::new())
         };
 
+        // create swapchain
         let swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
             .surface(surface.handle())
             .min_image_count(image_count)
@@ -62,8 +63,10 @@ impl Swapchain {
 
         let images = unsafe { swapchain_ext.get_swapchain_images(swapchain)? };
 
-        let image_views = create_image_views(device.handle(), surface_format.format, &images)?;
+        // create image views
+        let image_views = create_image_views(device, surface_format.format, &images)?;
 
+        // done
         Ok(Self {
             swapchain_ext,
             swapchain,
@@ -75,9 +78,8 @@ impl Swapchain {
     }
 
     pub unsafe fn destroy(&self, device: &Device) {
-        for &image_view in self.image_views.iter() {
-            device.handle().destroy_image_view(image_view, None);
-            log::debug!("dropped image view {:?}", image_view);
+        for image_view in self.image_views.iter() {
+            image_view.destroy(device);
         }
 
         self.swapchain_ext.destroy_swapchain(self.swapchain, None);
@@ -125,7 +127,7 @@ impl Swapchain {
     }
 
     #[inline]
-    pub fn image_views(&self) -> &[vk::ImageView] {
+    pub fn image_views(&self) -> &[ImageView] {
         &self.image_views
     }
 
@@ -182,41 +184,9 @@ fn choose_swapchain_extent(capabilities: &vk::SurfaceCapabilitiesKHR, size: [u32
     }
 }
 
-pub fn create_image_views(
-    device: &ash::Device,
-    surface_format: vk::Format,
-    images: &[vk::Image],
-) -> Result<Vec<vk::ImageView>> {
-    let mut result = Vec::with_capacity(images.len());
-
-    for &image in images.iter() {
-        let image_view_create_info = vk::ImageViewCreateInfo::builder()
-            .view_type(vk::ImageViewType::TYPE_2D)
-            .format(surface_format)
-            .components(
-                vk::ComponentMapping::builder()
-                    .r(vk::ComponentSwizzle::IDENTITY)
-                    .g(vk::ComponentSwizzle::IDENTITY)
-                    .b(vk::ComponentSwizzle::IDENTITY)
-                    .a(vk::ComponentSwizzle::IDENTITY)
-                    .build(),
-            )
-            .subresource_range(
-                vk::ImageSubresourceRange::builder()
-                    .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .base_mip_level(0)
-                    .level_count(1)
-                    .base_array_layer(0)
-                    .layer_count(1)
-                    .build(),
-            )
-            .image(image);
-
-        let image_view = unsafe { device.create_image_view(&image_view_create_info, None)? };
-        log::debug!("created image view {:?}", image_view);
-
-        result.push(image_view);
-    }
-
-    Ok(result)
+fn create_image_views(device: &Device, surface_format: vk::Format, images: &[vk::Image]) -> Result<Vec<ImageView>> {
+    images
+        .iter()
+        .map(|&image| ImageView::from_raw(device, image, surface_format, vk::ImageAspectFlags::COLOR, 1))
+        .collect::<Result<_>>()
 }

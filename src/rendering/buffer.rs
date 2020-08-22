@@ -4,7 +4,7 @@ use super::Device;
 pub struct Buffer {
     size: vk::DeviceSize,
     buffer: vk::Buffer,
-    memory: vk::DeviceMemory,
+    memory: Memory,
 }
 
 impl Buffer {
@@ -23,9 +23,63 @@ impl Buffer {
         let buffer = unsafe { device.handle().create_buffer(&buffer_create_info, None)? };
         log::debug!("created buffer {:?}", buffer);
 
-        // find memory type
+        // allocate memory
         let memory_requirements = device.get_buffer_memory_requirements(buffer);
 
+        let memory = Memory::new(device, &memory_requirements, required_properties)?;
+
+        // bind buffer memory
+        unsafe { device.handle().bind_buffer_memory(buffer, memory.handle(), 0)? };
+
+        // done
+        Ok(Self { size, buffer, memory })
+    }
+
+    pub unsafe fn destroy(&self, device: &Device) {
+        device.handle().destroy_buffer(self.buffer, None);
+        log::debug!("dropped buffer {:?}", self.buffer);
+
+        self.memory.destroy(device);
+    }
+
+    pub unsafe fn map_memory(&self, device: &Device) -> Result<*mut u8> {
+        let data_ptr = device
+            .handle()
+            .map_memory(self.memory.handle(), 0, self.size, vk::MemoryMapFlags::empty())?;
+        Ok(data_ptr as *mut u8)
+    }
+
+    pub unsafe fn unmap_memory(&self, device: &Device) {
+        device.handle().unmap_memory(self.memory.handle())
+    }
+
+    #[inline]
+    pub fn size(&self) -> vk::DeviceSize {
+        self.size
+    }
+
+    #[inline]
+    pub fn handle(&self) -> vk::Buffer {
+        self.buffer
+    }
+
+    #[inline]
+    pub fn memory(&self) -> &Memory {
+        &self.memory
+    }
+}
+
+pub struct Memory {
+    memory: vk::DeviceMemory,
+}
+
+impl Memory {
+    pub fn new(
+        device: &Device,
+        memory_requirements: &vk::MemoryRequirements,
+        required_properties: vk::MemoryPropertyFlags,
+    ) -> Result<Self> {
+        // find memory type
         let memory_type = find_memory_type(
             device.memory_properties(),
             required_properties,
@@ -40,46 +94,17 @@ impl Buffer {
         let memory = unsafe { device.handle().allocate_memory(&allocate_info, None)? };
         log::debug!("allocated buffer memory {:?}", memory);
 
-        // bind buffer memory
-        unsafe { device.handle().bind_buffer_memory(buffer, memory, 0)? };
-
         // done
-        Ok(Self { size, buffer, memory })
+        Ok(Self { memory })
     }
 
     pub unsafe fn destroy(&self, device: &Device) {
-        let device = device.handle();
-
-        device.destroy_buffer(self.buffer, None);
-        log::debug!("dropped buffer {:?}", self.buffer);
-
-        device.free_memory(self.memory, None);
+        device.handle().free_memory(self.memory, None);
         log::debug!("freed buffer memory {:?}", self.memory);
     }
 
-    pub unsafe fn map_memory(&self, device: &Device) -> Result<*mut u8> {
-        let data_ptr = device
-            .handle()
-            .map_memory(self.memory, 0, self.size, vk::MemoryMapFlags::empty())?;
-        Ok(data_ptr as *mut u8)
-    }
-
-    pub unsafe fn unmap_memory(&self, device: &Device) {
-        device.handle().unmap_memory(self.memory)
-    }
-
     #[inline]
-    pub fn size(&self) -> vk::DeviceSize {
-        self.size
-    }
-
-    #[inline]
-    pub fn handle(&self) -> vk::Buffer {
-        self.buffer
-    }
-
-    #[inline]
-    pub fn memory(&self) -> vk::DeviceMemory {
+    pub fn handle(&self) -> vk::DeviceMemory {
         self.memory
     }
 }

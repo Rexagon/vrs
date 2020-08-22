@@ -85,6 +85,31 @@ impl Device {
         Ok(())
     }
 
+    pub fn find_supported_format(
+        &self,
+        instance: &Instance,
+        candidate_formats: &[vk::Format],
+        tiling: vk::ImageTiling,
+        features: vk::FormatFeatureFlags,
+    ) -> Result<vk::Format> {
+        for &format in candidate_formats.iter() {
+            let format_properties = unsafe {
+                instance
+                    .handle()
+                    .get_physical_device_format_properties(self.physical_device, format)
+            };
+
+            if tiling == vk::ImageTiling::LINEAR && format_properties.linear_tiling_features.contains(features) {
+                return Ok(format);
+            } else if tiling == vk::ImageTiling::OPTIMAL && format_properties.optimal_tiling_features.contains(features)
+            {
+                return Ok(format);
+            }
+        }
+
+        Err(Error::msg("failed to find supported format"))
+    }
+
     #[inline]
     pub fn handle(&self) -> &ash::Device {
         &self.device
