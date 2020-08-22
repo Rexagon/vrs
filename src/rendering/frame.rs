@@ -1,6 +1,7 @@
 use super::prelude::*;
 use super::{
-    shader, utils, Buffer, CommandPool, Device, Framebuffer, Mesh, PipelineCache, ShaderModule, Swapchain, Vertex,
+    shader, utils, Buffer, CommandPool, Device, Framebuffer, Image, ImageView, Instance, Mesh, PipelineCache,
+    ShaderModule, Swapchain, Vertex,
 };
 
 pub struct Frame<T> {
@@ -190,19 +191,32 @@ pub struct SimpleFrameLogic {
     fragment_shader_module: ShaderModule,
     graphics_pipeline: vk::Pipeline,
     command_buffers: Vec<vk::CommandBuffer>,
-    framebuffers: Vec<Framebuffer>,
+    framebuffers: Vec<(Framebuffer, Image, ImageView)>,
+    depth_format: vk::Format,
 
     meshes: Vec<(vk::Buffer, vk::Buffer, u64, u32)>,
 }
 
 impl SimpleFrameLogic {
     pub fn new(
+        instance: &Instance,
         device: &Device,
         pipeline_cache: &PipelineCache,
         command_pool: &CommandPool,
         swapchain: &Swapchain,
     ) -> Result<Self> {
-        let simple_render_pass = SimpleRenderPass::new(device, swapchain.format())?;
+        let depth_format = device.find_supported_format(
+            instance,
+            &[
+                vk::Format::D32_SFLOAT,
+                vk::Format::D32_SFLOAT_S8_UINT,
+                vk::Format::D24_UNORM_S8_UINT,
+            ],
+            vk::ImageTiling::OPTIMAL,
+            vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT,
+        )?;
+
+        let simple_render_pass = SimpleRenderPass::new(device, swapchain.format(), depth_format)?;
         let pipeline_layout = SimplePipelineLayout::new(device, swapchain.image_views().len())?;
         let vertex_shader_module = ShaderModule::from_file(device, "shaders/spv/mesh.vert.spv")?;
         let fragment_shader_module = ShaderModule::from_file(device, "shaders/spv/mesh.frag.spv")?;
@@ -215,6 +229,7 @@ impl SimpleFrameLogic {
             graphics_pipeline: vk::Pipeline::null(),
             command_buffers: Vec::new(),
             framebuffers: Vec::new(),
+            depth_format,
             meshes: Vec::new(),
         };
 
@@ -288,7 +303,7 @@ impl SimpleFrameLogic {
             .depth_test_enable(true)
             .depth_write_enable(true)
             .depth_compare_op(vk::CompareOp::LESS_OR_EQUAL)
-            .depth_bounds_test_enable(true)
+            .depth_bounds_test_enable(false)
             .stencil_test_enable(false)
             .front(stencil_state)
             .back(stencil_state);
@@ -370,7 +385,13 @@ impl SimpleFrameLogic {
     }
 
     unsafe fn destroy_framebuffers(&self, device: &Device) {
-        self.framebuffers.iter().for_each(|item| item.destroy(device));
+        self.framebuffers
+            .iter()
+            .for_each(|(framebuffer, depth_image, depth_image_view)| {
+                depth_image_view.destroy(device);
+                depth_image.destroy(device);
+                framebuffer.destroy(device);
+            });
     }
 
     unsafe fn free_command_buffers(&self, device: &Device, command_pool: &CommandPool) {
@@ -393,25 +414,42 @@ impl SimpleFrameLogic {
 
 impl FrameLogic for SimpleFrameLogic {
     fn recreate_frame_buffers(&mut self, device: &Device, swapchain: &Swapchain) -> Result<()> {
-        // destroy framebuffers
-        unsafe { self.destroy_framebuffers(device) };
+        // destroy depth textures and framebuffers
+        unsafe {
+            self.destroy_framebuffers(device);
+        };
 
         // create framebuffers
-        self.framebuffers = swapchain.image_views().iter().try_fold(
-            Vec::with_capacity(swapchain.image_views().len()),
-            |mut framebuffers, image_view| {
-                Framebuffer::new(
+        self.framebuffers = swapchain
+            .image_views()
+            .iter()
+            .map(|image_view| {
+                let extent = swapchain.extent();
+
+                let depth_image = Image::new(
+                    device,
+                    [extent.width, extent.height],
+                    1,
+                    vk::SampleCountFlags::TYPE_1,
+                    self.depth_format,
+                    vk::ImageTiling::OPTIMAL,
+                    vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+                    vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                )?;
+
+                let depth_image_view =
+                    ImageView::new(device, &depth_image, self.depth_format, vk::ImageAspectFlags::DEPTH, 1)?;
+
+                let framebuffer = Framebuffer::new(
                     device,
                     self.simple_render_pass.handle(),
-                    &[image_view.handle()],
-                    swapchain.extent(),
-                )
-                .map(|framebuffer| {
-                    framebuffers.push(framebuffer);
-                    framebuffers
-                })
-            },
-        )?;
+                    &[image_view.handle(), depth_image_view.handle()],
+                    extent,
+                )?;
+
+                Ok((framebuffer, depth_image, depth_image_view))
+            })
+            .collect::<Result<_>>()?;
 
         // done
         Ok(())
@@ -447,15 +485,20 @@ impl FrameLogic for SimpleFrameLogic {
 
             unsafe { device.begin_command_buffer(command_buffer, &command_buffer_begin_info)? }
 
-            let clear_values = [vk::ClearValue {
-                color: vk::ClearColorValue {
-                    float32: [0.0, 0.0, 0.0, 1.0],
+            let clear_values = [
+                vk::ClearValue {
+                    color: vk::ClearColorValue {
+                        float32: [0.0, 0.0, 0.0, 1.0],
+                    },
                 },
-            }];
+                vk::ClearValue {
+                    depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 },
+                },
+            ];
 
             let render_pass_begin_info = vk::RenderPassBeginInfo::builder()
                 .render_pass(self.simple_render_pass.handle())
-                .framebuffer(self.framebuffers[i].handle())
+                .framebuffer(self.framebuffers[i].0.handle())
                 .render_area(vk::Rect2D {
                     offset: vk::Offset2D { x: 0, y: 0 },
                     extent,
@@ -515,20 +558,26 @@ pub struct SimpleRenderPass {
 }
 
 impl SimpleRenderPass {
-    fn new(device: &Device, surface_format: vk::Format) -> Result<Self> {
+    fn new(device: &Device, surface_format: vk::Format, depth_format: vk::Format) -> Result<Self> {
         // subpasses
-        let color_attachment_ref = [vk::AttachmentReference::builder()
+        let color_attachment_ref = vk::AttachmentReference::builder()
             .attachment(0)
             .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-            .build()];
+            .build();
+
+        let depth_attachment_ref = vk::AttachmentReference::builder()
+            .attachment(1)
+            .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+            .build();
 
         let subpasses = [vk::SubpassDescription::builder()
             .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-            .color_attachments(&color_attachment_ref)
+            .color_attachments(&[color_attachment_ref])
+            .depth_stencil_attachment(&depth_attachment_ref)
             .build()];
 
         // render pass
-        let render_pass_attachments = [vk::AttachmentDescription::builder()
+        let color_attachment = vk::AttachmentDescription::builder()
             .format(surface_format)
             .samples(vk::SampleCountFlags::TYPE_1)
             .load_op(vk::AttachmentLoadOp::CLEAR)
@@ -537,7 +586,19 @@ impl SimpleRenderPass {
             .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
             .initial_layout(vk::ImageLayout::UNDEFINED)
             .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-            .build()];
+            .build();
+
+        let depth_attachment = vk::AttachmentDescription::builder()
+            .format(depth_format)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::DONT_CARE)
+            .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+            .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+            .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+            .build();
+
+        let render_pass_attachments = [color_attachment, depth_attachment];
 
         let render_pass_create_info = vk::RenderPassCreateInfo::builder()
             .subpasses(&subpasses)

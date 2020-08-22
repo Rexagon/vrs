@@ -65,7 +65,7 @@ impl App {
 
         let scene = Scene::new(&device, &command_pool, "./models/monkey.glb")?;
 
-        let frame_logic = SimpleFrameLogic::new(&device, &pipeline_cache, &command_pool, &swapchain)?;
+        let frame_logic = SimpleFrameLogic::new(&instance, &device, &pipeline_cache, &command_pool, &swapchain)?;
         let mut frame = Frame::new(&device, &swapchain, frame_logic)?;
         frame.logic_mut().update_meshes(scene.meshes());
         frame
