@@ -147,11 +147,11 @@ fn choose_swapchain_format(available_formats: &[vk::SurfaceFormatKHR]) -> vk::Su
         if available_format.format == vk::Format::B8G8R8A8_SRGB
             && available_format.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
         {
-            return available_format.clone();
+            return *available_format;
         }
     }
 
-    return available_formats.first().unwrap().clone();
+    *available_formats.first().unwrap()
 }
 
 fn choose_swapchain_present_mode(available_present_modes: &[vk::PresentModeKHR]) -> vk::PresentModeKHR {

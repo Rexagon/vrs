@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 use super::prelude::*;
 use crate::rendering::{Device, Memory};
 
@@ -61,6 +63,7 @@ impl Image {
         self.image
     }
 
+    #[allow(unused)]
     #[inline]
     pub fn memory(&self) -> &Memory {
         &self.memory

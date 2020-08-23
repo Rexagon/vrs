@@ -46,10 +46,7 @@ impl Instance {
             log::debug!("required layer: {:?}", layer);
         });
 
-        let required_layers: Vec<*const i8> = required_layers
-            .into_iter()
-            .map(|item| item.as_ptr())
-            .collect::<Vec<_>>();
+        let required_layers: Vec<*const i8> = required_layers.iter().map(|item| item.as_ptr()).collect::<Vec<_>>();
 
         //
         let mut instance_info = vk::InstanceCreateInfo::builder()

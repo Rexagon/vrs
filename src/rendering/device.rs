@@ -99,9 +99,8 @@ impl Device {
                     .get_physical_device_format_properties(self.physical_device, format)
             };
 
-            if tiling == vk::ImageTiling::LINEAR && format_properties.linear_tiling_features.contains(features) {
-                return Ok(format);
-            } else if tiling == vk::ImageTiling::OPTIMAL && format_properties.optimal_tiling_features.contains(features)
+            if tiling == vk::ImageTiling::LINEAR && format_properties.linear_tiling_features.contains(features)
+                || tiling == vk::ImageTiling::OPTIMAL && format_properties.optimal_tiling_features.contains(features)
             {
                 return Ok(format);
             }

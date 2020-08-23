@@ -74,7 +74,7 @@ impl Mesh {
 
             let indices_data = bytemuck::cast_slice(indices);
             data_ptr
-                .offset(vertices_data.len() as isize)
+                .add(vertices_data.len())
                 .copy_from_nonoverlapping(indices_data.as_ptr(), indices_data.len());
 
             assert_eq!(staging_buffer_size as usize, vertices_data.len() + indices_data.len());

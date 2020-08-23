@@ -16,7 +16,7 @@ pub mod validation;
 pub use self::buffer::{Buffer, Memory};
 pub use self::command_buffer::CommandPool;
 pub use self::device::Device;
-pub use self::frame::{Frame, FrameLogic, FrameSyncObjects};
+pub use self::frame::{Frame, FrameSyncObjects};
 pub use self::framebuffer::Framebuffer;
 pub use self::image::{Image, ImageView};
 pub use self::instance::Instance;

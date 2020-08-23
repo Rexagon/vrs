@@ -23,7 +23,6 @@ use winit::window::Window;
 
 use crate::camera::{Camera, FirstPersonController};
 use crate::input::{InputState, InputStateHandler};
-use crate::rendering::frame::SimpleFrameLogic;
 use crate::scene::Scene;
 
 const IS_VALIDATION_ENABLED: bool = true;
@@ -40,7 +39,7 @@ struct App {
     command_pool: CommandPool,
 
     scene: Scene,
-    frame: Frame<SimpleFrameLogic>,
+    frame: Frame,
 
     now: Instant,
     input_state: InputState,
@@ -72,8 +71,7 @@ impl App {
 
         let scene = Scene::new(&device, &command_pool, "./models/monkey.glb")?;
 
-        let frame_logic = SimpleFrameLogic::new(&instance, &device, &pipeline_cache, &command_pool, &swapchain)?;
-        let mut frame = Frame::new(&device, &swapchain, frame_logic)?;
+        let mut frame = Frame::new(&instance, &device, &pipeline_cache, &command_pool, &swapchain)?;
         frame.logic_mut().update_meshes(scene.meshes());
         frame
             .logic_mut()
@@ -142,7 +140,6 @@ impl App {
             if self.is_fullscreen {
                 window.set_fullscreen(None);
             } else {
-                //window.set_inner_size(self.primary_monitor.size());
                 window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(
                     self.primary_monitor.clone(),
                 )));

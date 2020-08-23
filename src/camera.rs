@@ -1,9 +1,9 @@
+use once_cell::sync::OnceCell;
 use winit::dpi::{PhysicalPosition, PhysicalSize, Position};
 use winit::event::{MouseButton, VirtualKeyCode};
+use winit::window::Window;
 
 use crate::input::InputState;
-use once_cell::sync::OnceCell;
-use winit::window::Window;
 
 pub struct Camera {
     view: glm::Mat4,
@@ -113,7 +113,7 @@ impl FirstPersonController {
             self.position += direction.normalize() * movement_speed * dt;
         }
 
-        let view = glm::look_at(&self.position, &(&self.position + &self.direction), direction_up());
+        let view = glm::look_at(&self.position, &(self.position + self.direction), direction_up());
 
         self.camera.set_view(view);
     }
