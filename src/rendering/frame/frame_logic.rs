@@ -3,10 +3,13 @@ use super::graphics_pipeline_layout::GraphicsPipelineLayout;
 use crate::rendering::prelude::*;
 use crate::rendering::{shader, utils};
 use crate::rendering::{
-    CommandPool, Device, Framebuffer, Image, ImageView, Instance, Mesh, PipelineCache, ShaderModule, Swapchain, Vertex,
+    CommandPool, Device, Framebuffer, Image, ImageView, Mesh, PipelineCache, ShaderModule, Swapchain, Vertex,
 };
 
 pub struct FrameLogic {
+    device: Arc<Device>,
+    command_pool: Arc<CommandPool>,
+
     deferred_render_pass: DeferredRenderPass,
     pipeline_layout: GraphicsPipelineLayout,
     vertex_shader_module: ShaderModule,
@@ -21,14 +24,12 @@ pub struct FrameLogic {
 
 impl FrameLogic {
     pub fn new(
-        instance: &Instance,
-        device: &Device,
+        device: Arc<Device>,
         pipeline_cache: &PipelineCache,
-        command_pool: &CommandPool,
+        command_pool: Arc<CommandPool>,
         swapchain: &Swapchain,
     ) -> Result<Self> {
         let depth_format = device.find_supported_format(
-            instance,
             &[
                 vk::Format::D32_SFLOAT,
                 vk::Format::D32_SFLOAT_S8_UINT,
@@ -38,10 +39,10 @@ impl FrameLogic {
             vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT,
         )?;
 
-        let deferred_render_pass = DeferredRenderPass::new(device, swapchain.format(), depth_format)?;
-        let pipeline_layout = GraphicsPipelineLayout::new(device, swapchain.image_views().len())?;
-        let vertex_shader_module = ShaderModule::from_file(device, "shaders/spv/mesh.vert.spv")?;
-        let fragment_shader_module = ShaderModule::from_file(device, "shaders/spv/mesh.frag.spv")?;
+        let deferred_render_pass = DeferredRenderPass::new(device.clone(), swapchain.format(), depth_format)?;
+        let pipeline_layout = GraphicsPipelineLayout::new(device.clone(), swapchain.image_views().len())?;
+        let vertex_shader_module = ShaderModule::from_file(device.clone(), "shaders/spv/mesh.vert.spv")?;
+        let fragment_shader_module = ShaderModule::from_file(device.clone(), "shaders/spv/mesh.frag.spv")?;
 
         let main_function_name = shader::main_function_name();
 
@@ -158,6 +159,8 @@ impl FrameLogic {
         let graphics_pipeline = graphics_pipelines[0];
 
         let mut result = Self {
+            device,
+            command_pool,
             deferred_render_pass,
             pipeline_layout,
             vertex_shader_module,
@@ -169,39 +172,39 @@ impl FrameLogic {
             meshes: Vec::new(),
         };
 
-        result.recreate_frame_buffers(device, swapchain)?;
-        result.recreate_command_buffers(device, command_pool, swapchain)?;
+        result.recreate_frame_buffers(swapchain)?;
+        result.recreate_command_buffers(swapchain)?;
 
         Ok(result)
     }
 
-    unsafe fn destroy_framebuffers(&self, device: &Device) {
+    unsafe fn destroy_framebuffers(&self) {
         self.framebuffers
             .iter()
             .for_each(|(framebuffer, depth_image, depth_image_view)| {
-                depth_image_view.destroy(device);
-                depth_image.destroy(device);
-                framebuffer.destroy(device);
+                depth_image_view.destroy();
+                depth_image.destroy();
+                framebuffer.destroy();
             });
     }
 
-    unsafe fn free_command_buffers(&self, device: &Device, command_pool: &CommandPool) {
-        device
+    unsafe fn free_command_buffers(&self) {
+        self.device
             .handle()
-            .free_command_buffers(command_pool.handle(), &self.command_buffers);
+            .free_command_buffers(self.command_pool.handle(), &self.command_buffers);
     }
 
-    pub unsafe fn destroy(&self, device: &Device, command_pool: &CommandPool) {
-        self.free_command_buffers(device, command_pool);
-        self.destroy_framebuffers(device);
+    pub unsafe fn destroy(&self) {
+        self.free_command_buffers();
+        self.destroy_framebuffers();
 
-        device.handle().destroy_pipeline(self.graphics_pipeline, None);
+        self.device.handle().destroy_pipeline(self.graphics_pipeline, None);
         log::debug!("dropped pipeline {:?}", self.graphics_pipeline);
 
-        self.deferred_render_pass.destroy(device);
-        self.pipeline_layout.destroy(device);
-        self.vertex_shader_module.destroy(device);
-        self.fragment_shader_module.destroy(device);
+        self.deferred_render_pass.destroy();
+        self.pipeline_layout.destroy();
+        self.vertex_shader_module.destroy();
+        self.fragment_shader_module.destroy();
     }
 
     pub fn update_meshes(&mut self, meshes: &[Mesh]) {
@@ -218,10 +221,10 @@ impl FrameLogic {
             .collect();
     }
 
-    pub fn recreate_frame_buffers(&mut self, device: &Device, swapchain: &Swapchain) -> Result<()> {
+    pub fn recreate_frame_buffers(&mut self, swapchain: &Swapchain) -> Result<()> {
         // destroy depth textures and framebuffers
         unsafe {
-            self.destroy_framebuffers(device);
+            self.destroy_framebuffers();
         };
 
         // create framebuffers
@@ -232,7 +235,7 @@ impl FrameLogic {
                 let extent = swapchain.extent();
 
                 let depth_image = Image::new(
-                    device,
+                    self.device.clone(),
                     [extent.width, extent.height],
                     1,
                     vk::SampleCountFlags::TYPE_1,
@@ -242,11 +245,16 @@ impl FrameLogic {
                     vk::MemoryPropertyFlags::DEVICE_LOCAL,
                 )?;
 
-                let depth_image_view =
-                    ImageView::new(device, &depth_image, self.depth_format, vk::ImageAspectFlags::DEPTH, 1)?;
+                let depth_image_view = ImageView::new(
+                    self.device.clone(),
+                    &depth_image,
+                    self.depth_format,
+                    vk::ImageAspectFlags::DEPTH,
+                    1,
+                )?;
 
                 let framebuffer = Framebuffer::new(
-                    device,
+                    self.device.clone(),
                     self.deferred_render_pass.handle(),
                     &[image_view.handle(), depth_image_view.handle()],
                     extent,
@@ -260,22 +268,17 @@ impl FrameLogic {
         Ok(())
     }
 
-    pub fn recreate_command_buffers(
-        &mut self,
-        device: &Device,
-        command_pool: &CommandPool,
-        swapchain: &Swapchain,
-    ) -> Result<()> {
+    pub fn recreate_command_buffers(&mut self, swapchain: &Swapchain) -> Result<()> {
         // free command buffers
-        unsafe { self.free_command_buffers(device, command_pool) };
+        unsafe { self.free_command_buffers() };
 
         let extent = swapchain.extent();
 
         // create command buffers
-        let device = device.handle();
+        let device = self.device.handle();
 
         let command_buffer_create_info = vk::CommandBufferAllocateInfo::builder()
-            .command_pool(command_pool.handle())
+            .command_pool(self.command_pool.handle())
             .command_buffer_count(swapchain.image_count())
             .level(vk::CommandBufferLevel::PRIMARY);
 

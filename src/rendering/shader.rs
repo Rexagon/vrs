@@ -2,11 +2,12 @@ use super::prelude::*;
 use super::{utils, Device};
 
 pub struct ShaderModule {
+    device: Arc<Device>,
     shader_module: vk::ShaderModule,
 }
 
 impl ShaderModule {
-    pub fn from_file<T>(device: &Device, path: T) -> Result<Self>
+    pub fn from_file<T>(device: Arc<Device>, path: T) -> Result<Self>
     where
         T: AsRef<std::path::Path>,
     {
@@ -14,17 +15,17 @@ impl ShaderModule {
         Self::new(device, &code)
     }
 
-    pub fn new(device: &Device, code: &[u8]) -> Result<Self> {
+    pub fn new(device: Arc<Device>, code: &[u8]) -> Result<Self> {
         let shader_module_create_info = vk::ShaderModuleCreateInfo::builder().code(bytemuck::cast_slice(code));
 
         let shader_module = unsafe { device.handle().create_shader_module(&shader_module_create_info, None)? };
         log::debug!("created shader module {:?}", shader_module);
 
-        Ok(Self { shader_module })
+        Ok(Self { device, shader_module })
     }
 
-    pub unsafe fn destroy(&self, device: &Device) {
-        device.handle().destroy_shader_module(self.shader_module, None);
+    pub unsafe fn destroy(&self) {
+        self.device.handle().destroy_shader_module(self.shader_module, None);
         log::debug!("dropped shader module {:?}", self.shader_module);
     }
 

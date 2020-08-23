@@ -2,11 +2,12 @@ use crate::rendering::prelude::*;
 use crate::rendering::Device;
 
 pub struct DeferredRenderPass {
+    device: Arc<Device>,
     render_pass: vk::RenderPass,
 }
 
 impl DeferredRenderPass {
-    pub fn new(device: &Device, surface_format: vk::Format, depth_format: vk::Format) -> Result<Self> {
+    pub fn new(device: Arc<Device>, surface_format: vk::Format, depth_format: vk::Format) -> Result<Self> {
         // render pass
         let color_attachment = vk::AttachmentDescription::builder()
             .format(surface_format)
@@ -58,11 +59,11 @@ impl DeferredRenderPass {
         let render_pass = unsafe { device.handle().create_render_pass(&render_pass_create_info, None)? };
         log::debug!("created render pass {:?}", render_pass);
 
-        Ok(Self { render_pass })
+        Ok(Self { device, render_pass })
     }
 
-    pub unsafe fn destroy(&self, device: &Device) {
-        device.handle().destroy_render_pass(self.render_pass, None);
+    pub unsafe fn destroy(&self) {
+        self.device.handle().destroy_render_pass(self.render_pass, None);
         log::debug!("dropped render pass {:?}", self.render_pass);
     }
 

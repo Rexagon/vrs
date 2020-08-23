@@ -2,12 +2,13 @@ use super::prelude::*;
 use super::Device;
 
 pub struct Framebuffer {
+    device: Arc<Device>,
     framebuffer: vk::Framebuffer,
 }
 
 impl Framebuffer {
     pub fn new(
-        device: &Device,
+        device: Arc<Device>,
         render_pass: vk::RenderPass,
         attachments: &[vk::ImageView],
         extent: vk::Extent2D,
@@ -22,11 +23,11 @@ impl Framebuffer {
         let framebuffer = unsafe { device.handle().create_framebuffer(&framebuffer_create_info, None)? };
         log::debug!("created framebuffer {:?}", framebuffer);
 
-        Ok(Self { framebuffer })
+        Ok(Self { device, framebuffer })
     }
 
-    pub unsafe fn destroy(&self, device: &Device) {
-        device.handle().destroy_framebuffer(self.framebuffer, None);
+    pub unsafe fn destroy(&self) {
+        self.device.handle().destroy_framebuffer(self.framebuffer, None);
         log::debug!("dropped framebuffer {:?}", self.framebuffer);
     }
 

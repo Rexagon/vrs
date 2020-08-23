@@ -10,6 +10,7 @@ mod scene;
 
 extern crate nalgebra_glm as glm;
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Result;
@@ -30,13 +31,13 @@ const IS_VALIDATION_ENABLED: bool = true;
 struct App {
     primary_monitor: MonitorHandle,
 
-    device: Device,
+    device: Arc<Device>,
     surface: Surface,
     validation: Validation,
-    instance: Instance,
+    instance: Arc<Instance>,
     swapchain: Swapchain,
     pipeline_cache: PipelineCache,
-    command_pool: CommandPool,
+    command_pool: Arc<CommandPool>,
 
     scene: Scene,
     frame: Frame,
@@ -61,27 +62,25 @@ impl App {
 
         let primary_monitor = event_loop.primary_monitor();
 
-        let instance = Instance::new(&entry, &window, IS_VALIDATION_ENABLED)?;
+        let instance = Arc::new(Instance::new(&entry, &window, IS_VALIDATION_ENABLED)?);
         let validation = Validation::new(&entry, &instance, IS_VALIDATION_ENABLED)?;
         let surface = Surface::new(&entry, &instance, &window)?;
-        let device = Device::new(&instance, &surface, IS_VALIDATION_ENABLED)?;
-        let swapchain = Swapchain::new(&instance, &surface, &device, &window)?;
-        let pipeline_cache = PipelineCache::new(&device)?;
-        let command_pool = CommandPool::new(&device)?;
+        let device = Arc::new(Device::new(instance.clone(), &surface, IS_VALIDATION_ENABLED)?);
+        let swapchain = Swapchain::new(&instance, &surface, device.clone(), &window)?;
+        let command_pool = Arc::new(CommandPool::new(device.clone())?);
+        let pipeline_cache = PipelineCache::new(device.clone())?;
 
-        let scene = Scene::new(&device, &command_pool, "./models/monkey.glb")?;
+        let scene = Scene::new(device.clone(), &command_pool, "./models/monkey.glb")?;
 
-        let mut frame = Frame::new(&instance, &device, &pipeline_cache, &command_pool, &swapchain)?;
+        let mut frame = Frame::new(device.clone(), command_pool.clone(), &pipeline_cache, &swapchain)?;
         frame.logic_mut().update_meshes(scene.meshes());
-        frame
-            .logic_mut()
-            .recreate_command_buffers(&device, &command_pool, &swapchain)?;
+        frame.logic_mut().recreate_command_buffers(&swapchain)?;
 
         let now = Instant::now();
         let input_state = InputState::new();
         let input_state_handler = InputStateHandler::new();
         let camera = Camera::new(window.inner_size());
-        let camera_controller = FirstPersonController::new(camera, glm::vec3(0.0, 0.0, 1.0));
+        let camera_controller = FirstPersonController::new(camera, glm::vec3(0.0, -1.0, -2.0));
 
         Ok((
             event_loop,
@@ -155,17 +154,14 @@ impl App {
             .logic_mut()
             .pipeline_layout_mut()
             .uniform_buffers_mut()
-            .update_world_data(&self.device, current_frame, camera.view(), camera.projection())?;
+            .update_world_data(current_frame, camera.view(), camera.projection())?;
 
-        let was_resized = self.frame.draw(&self.device, &self.swapchain)?;
+        let was_resized = self.frame.draw(&self.swapchain)?;
         if was_resized {
             self.device.wait_idle()?;
-            unsafe {
-                self.swapchain.destroy(&self.device);
-            }
-            self.swapchain = Swapchain::new(&self.instance, &self.surface, &self.device, window)?;
-            self.frame
-                .recreate_logic(&self.device, &self.command_pool, &self.swapchain)?;
+            unsafe { self.swapchain.destroy() };
+            self.swapchain = Swapchain::new(&self.instance, &self.surface, self.device.clone(), window)?;
+            self.frame.recreate_logic(&self.swapchain)?;
         }
 
         Ok(())
@@ -217,11 +213,11 @@ impl App {
 impl Drop for App {
     fn drop(&mut self) {
         unsafe {
-            self.frame.destroy(&self.device, &self.command_pool);
-            self.scene.destroy(&self.device);
-            self.command_pool.destroy(&self.device);
-            self.pipeline_cache.destroy(&self.device);
-            self.swapchain.destroy(&self.device);
+            self.frame.destroy();
+            self.scene.destroy();
+            self.command_pool.destroy();
+            self.pipeline_cache.destroy();
+            self.swapchain.destroy();
             self.device.destroy();
             self.surface.destroy();
             self.validation.destroy();

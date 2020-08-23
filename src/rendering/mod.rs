@@ -32,6 +32,7 @@ pub(self) mod prelude {
     pub use std::ffi::{c_void, CStr, CString};
     pub use std::os::raw::c_char;
     pub use std::path::Path;
+    pub use std::sync::Arc;
 
     pub use anyhow::{Error, Result};
     pub use ash::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};

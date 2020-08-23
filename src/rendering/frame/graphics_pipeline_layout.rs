@@ -2,15 +2,16 @@ use crate::rendering::prelude::*;
 use crate::rendering::{Buffer, Device};
 
 pub struct GraphicsPipelineLayout {
+    device: Arc<Device>,
+    descriptor_pool: Arc<DescriptorPool>,
     pipeline_layout: vk::PipelineLayout,
-    descriptor_pool: DescriptorPool,
     uniform_buffers: UniformBuffers,
 }
 
 impl GraphicsPipelineLayout {
-    pub fn new(device: &Device, max_frames_in_flight: usize) -> Result<Self> {
-        let descriptor_pool = DescriptorPool::new(device, max_frames_in_flight)?;
-        let uniform_buffers = UniformBuffers::new(device, &descriptor_pool, max_frames_in_flight)?;
+    pub fn new(device: Arc<Device>, max_frames_in_flight: usize) -> Result<Self> {
+        let descriptor_pool = Arc::new(DescriptorPool::new(device.clone(), max_frames_in_flight)?);
+        let uniform_buffers = UniformBuffers::new(device.clone(), descriptor_pool.clone(), max_frames_in_flight)?;
 
         let descriptor_set_layouts = [uniform_buffers.layout()];
         let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo::builder().set_layouts(&descriptor_set_layouts);
@@ -23,18 +24,19 @@ impl GraphicsPipelineLayout {
         log::debug!("created pipeline layout {:?}", pipeline_layout);
 
         Ok(Self {
-            pipeline_layout,
+            device,
             descriptor_pool,
+            pipeline_layout,
             uniform_buffers,
         })
     }
 
-    pub unsafe fn destroy(&self, device: &Device) {
-        device.handle().destroy_pipeline_layout(self.pipeline_layout, None);
+    pub unsafe fn destroy(&self) {
+        self.device.handle().destroy_pipeline_layout(self.pipeline_layout, None);
         log::debug!("dropped pipeline layout {:?}", self.pipeline_layout);
 
-        self.uniform_buffers.destroy(device, &self.descriptor_pool);
-        self.descriptor_pool.destroy(device);
+        self.uniform_buffers.destroy();
+        self.descriptor_pool.destroy();
     }
 
     #[inline]
@@ -54,13 +56,15 @@ impl GraphicsPipelineLayout {
 }
 
 pub struct UniformBuffers {
+    device: Arc<Device>,
+    descriptor_pool: Arc<DescriptorPool>,
     descriptor_set_layout: vk::DescriptorSetLayout,
     world_data_buffers: Vec<Buffer>,
     descriptor_sets: Vec<vk::DescriptorSet>,
 }
 
 impl UniformBuffers {
-    pub fn new(device: &Device, descriptor_pool: &DescriptorPool, max_frames_in_flight: usize) -> Result<Self> {
+    pub fn new(device: Arc<Device>, descriptor_pool: Arc<DescriptorPool>, max_frames_in_flight: usize) -> Result<Self> {
         // create descriptor set layout
         let ubo_layout_bindings = [vk::DescriptorSetLayoutBinding::builder()
             .binding(0)
@@ -84,7 +88,7 @@ impl UniformBuffers {
         let world_data_buffers =
             (0..max_frames_in_flight).try_fold(Vec::with_capacity(max_frames_in_flight), |mut buffers, _| {
                 Buffer::new(
-                    device,
+                    device.clone(),
                     buffer_size,
                     vk::BufferUsageFlags::UNIFORM_BUFFER,
                     vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
@@ -132,34 +136,30 @@ impl UniformBuffers {
 
         // done
         Ok(Self {
+            device,
+            descriptor_pool,
             descriptor_set_layout,
             world_data_buffers,
             descriptor_sets,
         })
     }
 
-    pub unsafe fn destroy(&self, device: &Device, descriptor_pool: &DescriptorPool) {
-        self.world_data_buffers.iter().for_each(|buffer| buffer.destroy(device));
+    pub unsafe fn destroy(&self) {
+        self.world_data_buffers.iter().for_each(|buffer| buffer.destroy());
 
-        let device = device.handle();
+        let device = self.device.handle();
 
-        device.free_descriptor_sets(descriptor_pool.handle(), &self.descriptor_sets);
+        device.free_descriptor_sets(self.descriptor_pool.handle(), &self.descriptor_sets);
 
         device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
         log::debug!("dropped descriptor set layout {:?}", self.descriptor_set_layout);
     }
 
-    pub fn update_world_data(
-        &mut self,
-        device: &Device,
-        current_frame: usize,
-        view: &glm::Mat4,
-        projection: &glm::Mat4,
-    ) -> Result<()> {
+    pub fn update_world_data(&mut self, current_frame: usize, view: &glm::Mat4, projection: &glm::Mat4) -> Result<()> {
         let buffer = &self.world_data_buffers[current_frame];
 
         unsafe {
-            let data_ptr = buffer.map_memory(device)?;
+            let data_ptr = buffer.map_memory()?;
 
             let mut buffer_data = [0f32; 16 * 2];
             buffer_data[..16].copy_from_slice(view.as_slice());
@@ -168,7 +168,7 @@ impl UniformBuffers {
 
             data_ptr.copy_from_nonoverlapping(buffer_data_slice.as_ptr(), buffer_data_slice.len());
 
-            buffer.unmap_memory(device);
+            buffer.unmap_memory();
         }
 
         Ok(())
@@ -186,11 +186,12 @@ impl UniformBuffers {
 }
 
 pub struct DescriptorPool {
+    device: Arc<Device>,
     descriptor_pool: vk::DescriptorPool,
 }
 
 impl DescriptorPool {
-    pub fn new(device: &Device, size: usize) -> Result<Self> {
+    pub fn new(device: Arc<Device>, size: usize) -> Result<Self> {
         let pool_sizes = [vk::DescriptorPoolSize {
             ty: vk::DescriptorType::UNIFORM_BUFFER,
             descriptor_count: size as u32,
@@ -208,11 +209,14 @@ impl DescriptorPool {
         };
         log::debug!("created descriptor pool {:?}", descriptor_pool);
 
-        Ok(Self { descriptor_pool })
+        Ok(Self {
+            device,
+            descriptor_pool,
+        })
     }
 
-    pub unsafe fn destroy(&self, device: &Device) {
-        device.handle().destroy_descriptor_pool(self.descriptor_pool, None);
+    pub unsafe fn destroy(&self) {
+        self.device.handle().destroy_descriptor_pool(self.descriptor_pool, None);
         log::debug!("dropped descriptor pool {:?}", self.descriptor_pool);
     }
 

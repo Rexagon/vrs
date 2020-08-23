@@ -2,6 +2,7 @@ use super::prelude::*;
 use super::{utils, validation, Instance, Surface};
 
 pub struct Device {
+    instance: Arc<Instance>,
     device: ash::Device,
     physical_device: vk::PhysicalDevice,
     memory_properties: vk::PhysicalDeviceMemoryProperties,
@@ -9,7 +10,7 @@ pub struct Device {
 }
 
 impl Device {
-    pub fn new(instance: &Instance, surface: &Surface, is_validation_enabled: bool) -> Result<Self> {
+    pub fn new(instance: Arc<Instance>, surface: &Surface, is_validation_enabled: bool) -> Result<Self> {
         let (physical_device, queue_indices) = pick_physical_device(instance.handle(), surface)?;
         let memory_properties = unsafe { instance.handle().get_physical_device_memory_properties(physical_device) };
 
@@ -58,6 +59,7 @@ impl Device {
         log::debug!("created logical device");
 
         Ok(Self {
+            instance,
             device,
             physical_device,
             memory_properties,
@@ -87,14 +89,13 @@ impl Device {
 
     pub fn find_supported_format(
         &self,
-        instance: &Instance,
         candidate_formats: &[vk::Format],
         tiling: vk::ImageTiling,
         features: vk::FormatFeatureFlags,
     ) -> Result<vk::Format> {
         for &format in candidate_formats.iter() {
             let format_properties = unsafe {
-                instance
+                self.instance
                     .handle()
                     .get_physical_device_format_properties(self.physical_device, format)
             };

@@ -45,14 +45,14 @@ pub struct Mesh {
 }
 
 impl Mesh {
-    pub fn new(device: &Device, command_pool: &CommandPool, vertices: &[Vertex], indices: &[u16]) -> Result<Self> {
+    pub fn new(device: Arc<Device>, command_pool: &CommandPool, vertices: &[Vertex], indices: &[u16]) -> Result<Self> {
         let vertex_buffer_size = std::mem::size_of_val(vertices) as vk::DeviceSize;
         let index_buffer_size = std::mem::size_of_val(indices) as vk::DeviceSize;
         let staging_buffer_size = vertex_buffer_size + index_buffer_size;
 
         // create staging buffer
         let staging_buffer = Buffer::new(
-            device,
+            device.clone(),
             staging_buffer_size,
             vk::BufferUsageFlags::TRANSFER_SRC,
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
@@ -84,7 +84,7 @@ impl Mesh {
 
         // create vertex buffer
         let vertex_buffer = Buffer::new(
-            device,
+            device.clone(),
             vertex_buffer_size,
             vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::VERTEX_BUFFER,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
@@ -92,7 +92,7 @@ impl Mesh {
 
         // create index buffer
         let index_buffer = Buffer::new(
-            device,
+            device.clone(),
             index_buffer_size,
             vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::INDEX_BUFFER,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
@@ -155,7 +155,7 @@ impl Mesh {
         }
 
         // destroy staging buffer
-        unsafe { staging_buffer.destroy(device) };
+        unsafe { staging_buffer.destroy() };
 
         // done
         let index_count = indices.len() as u32;
@@ -167,9 +167,9 @@ impl Mesh {
         })
     }
 
-    pub unsafe fn destroy(&self, device: &Device) {
-        self.vertex_buffer.destroy(device);
-        self.index_buffer.destroy(device);
+    pub unsafe fn destroy(&self) {
+        self.vertex_buffer.destroy();
+        self.index_buffer.destroy();
     }
 
     #[inline]

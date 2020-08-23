@@ -4,13 +4,14 @@ use super::prelude::*;
 use crate::rendering::{Device, Memory};
 
 pub struct Image {
+    device: Arc<Device>,
     image: vk::Image,
     memory: Memory,
 }
 
 impl Image {
     pub fn new(
-        device: &Device,
+        device: Arc<Device>,
         size: [u32; 2],
         mip_levels: u32,
         samples: vk::SampleCountFlags,
@@ -42,20 +43,20 @@ impl Image {
         // allocate memroy
         let image_memory_requirements = unsafe { device.handle().get_image_memory_requirements(image) };
 
-        let memory = Memory::new(device, &image_memory_requirements, required_memory_properties)?;
+        let memory = Memory::new(device.clone(), &image_memory_requirements, required_memory_properties)?;
 
         // bind memory
         unsafe { device.handle().bind_image_memory(image, memory.handle(), 0)? };
 
         // done
-        Ok(Self { image, memory })
+        Ok(Self { device, image, memory })
     }
 
-    pub unsafe fn destroy(&self, device: &Device) {
-        device.handle().destroy_image(self.image, None);
+    pub unsafe fn destroy(&self) {
+        self.device.handle().destroy_image(self.image, None);
         log::debug!("dropped image {:?}", self.image);
 
-        self.memory.destroy(device);
+        self.memory.destroy();
     }
 
     #[inline]
@@ -71,12 +72,13 @@ impl Image {
 }
 
 pub struct ImageView {
+    device: Arc<Device>,
     image_view: vk::ImageView,
 }
 
 impl ImageView {
     pub fn new(
-        device: &Device,
+        device: Arc<Device>,
         image: &Image,
         format: vk::Format,
         aspect_flags: vk::ImageAspectFlags,
@@ -86,7 +88,7 @@ impl ImageView {
     }
 
     pub fn from_raw(
-        device: &Device,
+        device: Arc<Device>,
         image: vk::Image,
         format: vk::Format,
         aspect_flags: vk::ImageAspectFlags,
@@ -113,11 +115,11 @@ impl ImageView {
         let image_view = unsafe { device.handle().create_image_view(&image_view_create_info, None)? };
         log::debug!("created image view {:?}", image_view);
 
-        Ok(Self { image_view })
+        Ok(Self { device, image_view })
     }
 
-    pub unsafe fn destroy(&self, device: &Device) {
-        device.handle().destroy_image_view(self.image_view, None);
+    pub unsafe fn destroy(&self) {
+        self.device.handle().destroy_image_view(self.image_view, None);
         log::debug!("dropped image view {:?}", self.image_view);
     }
 

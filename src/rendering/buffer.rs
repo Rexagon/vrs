@@ -2,6 +2,7 @@ use super::prelude::*;
 use super::Device;
 
 pub struct Buffer {
+    device: Arc<Device>,
     size: vk::DeviceSize,
     buffer: vk::Buffer,
     memory: Memory,
@@ -9,7 +10,7 @@ pub struct Buffer {
 
 impl Buffer {
     pub fn new(
-        device: &Device,
+        device: Arc<Device>,
         size: vk::DeviceSize,
         usage: vk::BufferUsageFlags,
         required_properties: vk::MemoryPropertyFlags,
@@ -26,31 +27,37 @@ impl Buffer {
         // allocate memory
         let memory_requirements = device.get_buffer_memory_requirements(buffer);
 
-        let memory = Memory::new(device, &memory_requirements, required_properties)?;
+        let memory = Memory::new(device.clone(), &memory_requirements, required_properties)?;
 
         // bind buffer memory
         unsafe { device.handle().bind_buffer_memory(buffer, memory.handle(), 0)? };
 
         // done
-        Ok(Self { size, buffer, memory })
+        Ok(Self {
+            device,
+            size,
+            buffer,
+            memory,
+        })
     }
 
-    pub unsafe fn destroy(&self, device: &Device) {
-        device.handle().destroy_buffer(self.buffer, None);
+    pub unsafe fn destroy(&self) {
+        self.device.handle().destroy_buffer(self.buffer, None);
         log::debug!("dropped buffer {:?}", self.buffer);
 
-        self.memory.destroy(device);
+        self.memory.destroy();
     }
 
-    pub unsafe fn map_memory(&self, device: &Device) -> Result<*mut u8> {
-        let data_ptr = device
-            .handle()
-            .map_memory(self.memory.handle(), 0, self.size, vk::MemoryMapFlags::empty())?;
+    pub unsafe fn map_memory(&self) -> Result<*mut u8> {
+        let data_ptr =
+            self.device
+                .handle()
+                .map_memory(self.memory.handle(), 0, self.size, vk::MemoryMapFlags::empty())?;
         Ok(data_ptr as *mut u8)
     }
 
-    pub unsafe fn unmap_memory(&self, device: &Device) {
-        device.handle().unmap_memory(self.memory.handle())
+    pub unsafe fn unmap_memory(&self) {
+        self.device.handle().unmap_memory(self.memory.handle())
     }
 
     #[inline]
@@ -70,12 +77,13 @@ impl Buffer {
 }
 
 pub struct Memory {
+    device: Arc<Device>,
     memory: vk::DeviceMemory,
 }
 
 impl Memory {
     pub fn new(
-        device: &Device,
+        device: Arc<Device>,
         memory_requirements: &vk::MemoryRequirements,
         required_properties: vk::MemoryPropertyFlags,
     ) -> Result<Self> {
@@ -95,11 +103,11 @@ impl Memory {
         log::debug!("allocated buffer memory {:?}", memory);
 
         // done
-        Ok(Self { memory })
+        Ok(Self { device, memory })
     }
 
-    pub unsafe fn destroy(&self, device: &Device) {
-        device.handle().free_memory(self.memory, None);
+    pub unsafe fn destroy(&self) {
+        self.device.handle().free_memory(self.memory, None);
         log::debug!("freed buffer memory {:?}", self.memory);
     }
 

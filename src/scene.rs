@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use gltf::Gltf;
 
@@ -8,7 +10,7 @@ pub struct Scene {
 }
 
 impl Scene {
-    pub fn new<T>(device: &Device, command_pool: &CommandPool, path: T) -> Result<Self>
+    pub fn new<T>(device: Arc<Device>, command_pool: &CommandPool, path: T) -> Result<Self>
     where
         T: AsRef<std::path::Path>,
     {
@@ -47,14 +49,14 @@ impl Scene {
                 gltf::mesh::util::ReadIndices::U32(iter) => iter.map(|index| index as u16).collect(),
             };
 
-            meshes.push(Mesh::new(device, command_pool, &vertices, &indices)?);
+            meshes.push(Mesh::new(device.clone(), command_pool, &vertices, &indices)?);
         }
 
         Ok(Self { meshes })
     }
 
-    pub unsafe fn destroy(&self, device: &Device) {
-        self.meshes.iter().for_each(|mesh| mesh.destroy(device));
+    pub unsafe fn destroy(&self) {
+        self.meshes.iter().for_each(|mesh| mesh.destroy());
     }
 
     #[inline]

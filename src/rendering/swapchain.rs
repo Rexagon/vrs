@@ -2,6 +2,7 @@ use super::prelude::*;
 use super::{Device, ImageView, Instance, Surface};
 
 pub struct Swapchain {
+    device: Arc<Device>,
     swapchain_ext: ash::extensions::khr::Swapchain,
     swapchain: vk::SwapchainKHR,
     images: Vec<vk::Image>,
@@ -11,7 +12,7 @@ pub struct Swapchain {
 }
 
 impl Swapchain {
-    pub fn new(instance: &Instance, surface: &Surface, device: &Device, window: &Window) -> Result<Self> {
+    pub fn new(instance: &Instance, surface: &Surface, device: Arc<Device>, window: &Window) -> Result<Self> {
         let size = window.inner_size();
         let size = [size.width, size.height];
 
@@ -64,10 +65,11 @@ impl Swapchain {
         let images = unsafe { swapchain_ext.get_swapchain_images(swapchain)? };
 
         // create image views
-        let image_views = create_image_views(device, surface_format.format, &images)?;
+        let image_views = create_image_views(device.clone(), surface_format.format, &images)?;
 
         // done
         Ok(Self {
+            device,
             swapchain_ext,
             swapchain,
             images,
@@ -77,9 +79,9 @@ impl Swapchain {
         })
     }
 
-    pub unsafe fn destroy(&self, device: &Device) {
+    pub unsafe fn destroy(&self) {
         for image_view in self.image_views.iter() {
-            image_view.destroy(device);
+            image_view.destroy();
         }
 
         self.swapchain_ext.destroy_swapchain(self.swapchain, None);
@@ -95,12 +97,7 @@ impl Swapchain {
         Ok((image_index, is_sub_optimal))
     }
 
-    pub fn present_image(
-        &self,
-        device: &Device,
-        signal_semaphores: &[vk::Semaphore],
-        image_index: u32,
-    ) -> Result<bool> {
+    pub fn present_image(&self, signal_semaphores: &[vk::Semaphore], image_index: u32) -> Result<bool> {
         let indices = [image_index];
 
         let swapchains = [self.swapchain];
@@ -111,7 +108,7 @@ impl Swapchain {
 
         let result = unsafe {
             self.swapchain_ext
-                .queue_present(device.queues().graphics_queue, &present_info)
+                .queue_present(self.device.queues().graphics_queue, &present_info)
         };
 
         match result {
@@ -184,9 +181,9 @@ fn choose_swapchain_extent(capabilities: &vk::SurfaceCapabilitiesKHR, size: [u32
     }
 }
 
-fn create_image_views(device: &Device, surface_format: vk::Format, images: &[vk::Image]) -> Result<Vec<ImageView>> {
+fn create_image_views(device: Arc<Device>, surface_format: vk::Format, images: &[vk::Image]) -> Result<Vec<ImageView>> {
     images
         .iter()
-        .map(|&image| ImageView::from_raw(device, image, surface_format, vk::ImageAspectFlags::COLOR, 1))
+        .map(|&image| ImageView::from_raw(device.clone(), image, surface_format, vk::ImageAspectFlags::COLOR, 1))
         .collect::<Result<_>>()
 }
